@@ -7,7 +7,25 @@ redesigns, and extends editable widescreen `.pptx` decks from documents, data,
 images, audio, and video, with optional PDF export. See the
 [usage guide](docs/USAGE.md#6-powerpoint-presentations) for examples.
 
-## HOW TO DOWNLOAD JARVIS
+## Quick start (macOS/Linux)
+
+In Terminal, run:
+
+```bash
+git clone https://github.com/MAL19INDUSTRIES/JARVIS-OS-V.2.git
+cd JARVIS-OS-V.2
+./scripts/setup_jarvis.sh
+```
+
+Open `.env`, add your `GEMINI_API_KEY`, then launch JARVIS:
+
+```bash
+jarvis
+```
+
+You only need to run the setup command once. After that, open Terminal and type `jarvis`.
+
+## Manual setup
 
 ```bash
 python3 -m venv .venv
