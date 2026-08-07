@@ -81,6 +81,7 @@ def _format_ddg(query: str, results: list[dict]) -> str:
         lines.append("")
     return "\n".join(lines).strip()
 
+
 def _compare(items: list[str], aspect: str) -> str:
     query = (
         f"Compare {', '.join(items)} in terms of {aspect}. "

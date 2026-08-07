@@ -22,6 +22,9 @@ class SecretStore:
     def get(self, key: str) -> Optional[str]:
         raise NotImplementedError
 
+    def delete(self, key: str) -> None:
+        raise NotImplementedError
+
 
 class KeyringSecretStore(SecretStore):
     def __init__(self, service: str = SERVICE):
@@ -35,7 +38,19 @@ class KeyringSecretStore(SecretStore):
         self._keyring.set_password(self.service, key, value)
 
     def get(self, key: str) -> Optional[str]:
-        return self._keyring.get_password(self.service, key)
+        try:
+            return self._keyring.get_password(self.service, key)
+        except Exception:
+            # A locked/unavailable macOS Keychain must not abort JARVIS boot.
+            # Setup remains available so the user can validate a session key.
+            return None
+
+    def delete(self, key: str) -> None:
+        try:
+            self._keyring.delete_password(self.service, key)
+        except Exception:
+            # Missing entries and unavailable backends should not crash setup.
+            pass
 
 
 class NoopSecretStore(SecretStore):
@@ -49,6 +64,9 @@ class NoopSecretStore(SecretStore):
 
     def get(self, key: str) -> Optional[str]:
         return self._mem.get(key)
+
+    def delete(self, key: str) -> None:
+        self._mem.pop(key, None)
 
 
 _store: SecretStore | None = None
@@ -64,4 +82,3 @@ def get_secret_store() -> SecretStore:
     except Exception:
         _store = NoopSecretStore()
     return _store
-

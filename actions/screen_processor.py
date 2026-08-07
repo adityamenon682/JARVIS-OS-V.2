@@ -87,9 +87,9 @@ _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
 
-_IMG_MAX_W = 480
-_IMG_MAX_H = 270
-_JPEG_Q    = 45
+_IMG_MAX_W = 1600
+_IMG_MAX_H = 1000
+_JPEG_Q    = 82
 
 _last_capture_time = 0.0
 _MIN_CAPTURE_INTERVAL = 0.5  # seconds
@@ -100,7 +100,8 @@ _SYSTEM_PROMPT = (
     "Be concise and direct — maximum two sentences unless the user's question "
     "requires more detail. "
     "Address the user respectfully. "
-    "Always call the appropriate tool; never simulate results."
+    "Only state text, names, buttons, or UI details that are legible in the image. "
+    "If something is unclear, say that it is unclear instead of guessing."
 )
 
 
@@ -214,6 +215,30 @@ def _capture_camera() -> tuple[bytes, str]:
 
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_Q])
     return buf.tobytes(), "image/jpeg"
+
+
+def _direct_vision_answer(image_bytes: bytes, mime_type: str, user_text: str) -> str:
+    client = genai.Client(api_key=_get_api_key())
+    prompt = (
+        f"{_SYSTEM_PROMPT}\n\n"
+        "For screen analysis, prioritize visible on-screen text and exact UI state. "
+        "Do not identify people, recipients, or accounts unless the name is clearly readable. "
+        "If multiple names are visible, distinguish the active chat/header from side-list names. "
+        "Answer the user's question directly.\n\n"
+        f"User question: {user_text}"
+    )
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            gtypes.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            prompt,
+        ],
+    )
+
+    text = (getattr(response, "text", "") or "").strip()
+    if not text:
+        raise RuntimeError("Gemini returned no text for the screen image.")
+    return re.sub(r"\s+", " ", text).strip()
 
 class _VisionSession:
     def __init__(self):
@@ -448,8 +473,34 @@ def screen_process(
     response=None,
     player=None,
     session_memory=None,
-) -> bool:
+    speak=None,
+) -> str:
     global _last_capture_time
+    preview_active = False
+
+    def _deliver(message: str, *, error: bool = False) -> str:
+        """Route the vision result to speech, with the log as a fallback."""
+        spoken = False
+        if callable(speak):
+            try:
+                spoken = bool(speak(message))
+            except Exception as exc:
+                print(f"[Vision] ⚠️  Speech handoff failed: {exc}")
+        if player and not spoken:
+            try:
+                prefix = "ERR" if error else "Jarvis"
+                player.write_log(f"{prefix}: {message}")
+            except Exception:
+                pass
+        if preview_active and player and hasattr(player, "hide_vision_preview"):
+            try:
+                # Keep the live feed visible while the spoken result is likely
+                # still playing, then release its camera/screen resources.
+                hold_ms = 2400 if error else max(2200, min(10_000, len(message) * 55))
+                player.hide_vision_preview(hold_ms)
+            except Exception:
+                pass
+        return message
 
     params    = parameters or {}
     user_text = (params.get("text") or params.get("user_text") or "").strip()
@@ -457,21 +508,15 @@ def screen_process(
 
     if not user_text:
         print("[Vision] ⚠️  No question provided — aborting")
-        return False
+        return _deliver("No vision question was provided.", error=True)
 
     print(f"[Vision] ▶ angle={angle!r}  question='{user_text[:80]}'")
-
-    try:
-        _ensure_session(player=player)
-    except Exception as e:
-        print(f"[Vision] ❌ Could not start session: {e}")
-        return False
 
     # Cooldown to prevent excessive captures
     now = time.time()
     if now - _last_capture_time < _MIN_CAPTURE_INTERVAL:
         print(f"[Vision] ⚠️  Capture too frequent — skipping")
-        return False
+        return _deliver("Screen capture skipped because requests are too frequent.", error=True)
 
     try:
         if angle == "camera":
@@ -483,13 +528,23 @@ def screen_process(
         _last_capture_time = now
     except Exception as e:
         print(f"[Vision] ❌ Capture error: {e}")
-        return False
+        return _deliver(f"Screen capture failed: {e}", error=True)
 
-    result = _session.request(image_bytes, mime_type, user_text)
-    if result is None:
-        print("[Vision] ⚠️  No vision result")
-        return False
-    return True
+    if player and hasattr(player, "show_vision_preview"):
+        try:
+            player.show_vision_preview(angle)
+            preview_active = True
+        except Exception as exc:
+            print(f"[Vision] ⚠️  Live preview unavailable: {exc}")
+
+    try:
+        result = _direct_vision_answer(image_bytes, mime_type, user_text)
+    except Exception as e:
+        print(f"[Vision] ❌ Analysis error: {e}")
+        return _deliver(f"Screen analysis failed: {e}", error=True)
+
+    print(f"[Vision] 💬 {result}")
+    return _deliver(result)
 
 
 def warmup_session(player=None) -> None:

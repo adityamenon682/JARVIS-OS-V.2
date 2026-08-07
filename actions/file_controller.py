@@ -1,6 +1,7 @@
 import os
 import shutil
 import platform
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -294,6 +295,40 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         return f"Could not read file: {e}"
 
 
+def open_file(path: str, name: str = "") -> str:
+    """Open a local file or folder with the operating system's default app."""
+    try:
+        base = _resolve_path(path)
+        target = (base / name) if name else base
+        if not _is_safe_path(target):
+            return f"Access denied: {target}"
+        if not target.exists():
+            return f"Not found: {target.name or target}"
+
+        if _OS == "Windows":
+            os.startfile(str(target))  # type: ignore[attr-defined]
+        else:
+            command = ["open", str(target)] if _OS == "Darwin" else ["xdg-open", str(target)]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "the operating system rejected the request").strip()
+                return f"Could not open {target.name}: {detail}"
+
+        kind = "folder" if target.is_dir() else "file"
+        return f"Opened {kind}: {target.name}"
+    except FileNotFoundError:
+        opener = "open" if _OS == "Darwin" else "xdg-open"
+        return f"Could not open the file because {opener} is unavailable."
+    except Exception as e:
+        return f"Could not open file: {e}"
+
+
 def write_file(path: str, name: str = "", content: str = "",
                append: bool = False) -> str:
     try:
@@ -523,6 +558,9 @@ def file_controller(
 
         elif action == "read":
             return read_file(path, name=name)
+
+        elif action == "open":
+            return open_file(path, name=name)
 
         elif action == "write":
             return write_file(

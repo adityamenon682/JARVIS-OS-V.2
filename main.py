@@ -22,11 +22,14 @@ from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
 from actions.weather_report    import weather_action
-from actions.send_message      import send_message
+from actions.send_message      import send_message, prepare_message_reply
+from actions.email_control     import email_control
+from actions.message_monitor   import check_messages
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import screen_process
 from actions.youtube_video     import youtube_video
+from actions.media_control     import media_control
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
@@ -35,6 +38,9 @@ from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
+from actions.presentation_maker import request_presentation
+from actions.deep_research import request_deep_research
+from core.live_model import pick_live_model
 
 
 def get_base_dir():
@@ -68,6 +74,113 @@ DEFAULT_VOICE_NAME   = "puck"
 
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
+STARTUP_CLAPS_REQUIRED = 2
+STARTUP_CLAP_MAX_GAP_SECONDS = 4.0
+STARTUP_CLAP_COOLDOWN_SECONDS = 0.22
+SELF_QUIT_GOODBYE = (
+    "Certainly, sir. It has been a privilege. JARVIS is going offline now. "
+    "Until next time."
+)
+
+_SELF_QUIT_PATTERNS = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (
+    r"\b(?:quit|close|exit)\s+(?:jarvis|yourself)\b",
+    r"\b(?:shut|turn)\s+(?:jarvis|yourself)\s+(?:down|off)\b",
+    r"\b(?:shut\s+down|turn\s+off|power\s+down)\s+(?:jarvis|yourself)\b",
+    r"\bjarvis\b.{0,36}\b(?:quit|close|exit|shut\s+down|turn\s+off|go\s+offline)\b",
+    r"\b(?:go|take\s+yourself)\s+offline(?:\s+jarvis)?\b",
+))
+
+
+def wait_for_startup_claps(
+    required: int = STARTUP_CLAPS_REQUIRED,
+    *,
+    timeout: float | None = None,
+    stream_factory=None,
+) -> bool:
+    """Hold startup until two distinct claps are heard by the default microphone."""
+    if os.environ.get("JARVIS_SKIP_CLAP_GATE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("[JARVIS] 👏 Startup clap gate bypassed (JARVIS_SKIP_CLAP_GATE).")
+        return True
+
+    required = max(1, int(required))
+    stream_factory = stream_factory or sd.InputStream
+    try:
+        import numpy as np
+    except ImportError:
+        print("[JARVIS] ❌ Startup clap gate needs numpy. Set JARVIS_SKIP_CLAP_GATE=1 to bypass.")
+        return False
+
+    clap_times: list[float] = []
+    last_clap_at = 0.0
+    # Microphone input levels vary considerably between Mac models.  The old
+    # fixed 0.12 RMS / 0.32 peak gates rejected quiet real claps, while laptop
+    # fan noise could sometimes trip them.  Track the room floor and use both
+    # transient shape (crest factor) and energy to identify a clap.
+    noise_floor = 0.008
+    finished = threading.Event()
+    started_at = time.monotonic()
+
+    def callback(indata, frames, time_info, status):
+        nonlocal last_clap_at, noise_floor, clap_times
+        if status:
+            print(f"[JARVIS] ⚠️ Clap mic: {status}")
+        samples = np.asarray(indata, dtype=np.float32).reshape(-1)
+        if samples.size == 0:
+            return
+        magnitude = np.abs(samples)
+        rms = float(np.sqrt(np.mean(samples * samples)))
+        peak = float(np.max(magnitude))
+        # Only let low-energy frames teach the noise floor; otherwise a clap
+        # would raise the threshold immediately and make the second clap hard
+        # to detect.
+        if rms < max(0.08, noise_floor * 6.0):
+            noise_floor = (noise_floor * 0.96) + (rms * 0.04)
+        threshold = max(0.100, noise_floor * 6.5)
+        peak_threshold = max(0.35, noise_floor * 15.0)
+        crest_factor = peak / max(rms, 1e-6)
+        now = time.monotonic()
+        # A valid clap must be either a sharp transient with meaningful energy
+        # or a genuinely loud impact. This rejects speech, fan noise, and most
+        # desk/keyboard taps that only have a brief peak.
+        is_transient = crest_factor >= 2.20 and rms >= threshold
+        is_loud = rms >= max(0.28, noise_floor * 15.0)
+        if (
+            peak < peak_threshold
+            or not (is_transient or is_loud)
+            or now - last_clap_at < STARTUP_CLAP_COOLDOWN_SECONDS
+        ):
+            return
+        if clap_times and now - clap_times[-1] > STARTUP_CLAP_MAX_GAP_SECONDS:
+            clap_times = []
+        clap_times.append(now)
+        last_clap_at = now
+        print(f"[JARVIS] 👏 Clap {len(clap_times)}/{required} detected")
+        if len(clap_times) >= required:
+            finished.set()
+
+    print(f"[JARVIS] 👏 Waiting for {required} claps to power up...")
+    try:
+        with stream_factory(
+            samplerate=SEND_SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype="float32",
+            blocksize=512,
+            callback=callback,
+        ):
+            while not finished.wait(0.05):
+                if timeout is not None and time.monotonic() - started_at >= timeout:
+                    print("[JARVIS] ⏱️ Startup clap gate timed out.")
+                    return False
+    except KeyboardInterrupt:
+        print("\n[JARVIS] Startup cancelled.")
+        return False
+    except Exception as exc:
+        print(f"[JARVIS] ❌ Startup clap microphone unavailable: {exc}")
+        print("[JARVIS] Set JARVIS_SKIP_CLAP_GATE=1 if microphone access is unavailable.")
+        return False
+
+    print("[JARVIS] ⚡ Two claps detected. Powering up...")
+    return True
 
 def _get_api_key() -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -171,21 +284,96 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "send_message",
+        "name": "check_messages",
         "description": (
-            "Sends a text message via WhatsApp, Telegram, Instagram, Messages, Discord, "
-            "or any focused/current messaging app. Every sent text is automatically marked "
-            "with CREATED BY JARVIS. The final outgoing message is typed visibly into the "
-            "message box instead of pasted."
+            "Reads the current Instagram or Apple Messages conversation and optionally searches Contacts. "
+            "Use this before drafting a reply or when the user asks about recent messages."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name. Optional when platform is current/focused."},
-                "message_text": {"type": "STRING", "description": "The message to send. JARVIS appends CREATED BY JARVIS automatically."},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, Instagram, Messages, Discord, or current/focused for the active text box. Instagram uses screen vision to find the message controls."}
+                "platform": {"type": "STRING", "description": "all | Instagram | iMessage | Contacts. Default: all."},
+                "include_contacts": {"type": "BOOLEAN", "description": "Also search the user's Contacts."},
+                "contact_query": {"type": "STRING", "description": "Optional spoken contact name to match."},
+                "max_messages": {"type": "INTEGER", "description": "Maximum current-chat lines to inspect. Default: 30."}
             },
-            "required": ["message_text", "platform"]
+            "required": []
+        }
+    },
+    {
+        "name": "prepare_message_reply",
+        "description": (
+            "Creates an approval-gated message draft, approves the current pending draft, or cancels it. "
+            "Never approve unless the user explicitly confirms the exact pending draft."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "enum": ["prepare", "approve", "cancel"], "description": "Draft lifecycle action."},
+                "platform": {"type": "STRING", "description": "Instagram, iMessage, WhatsApp, Telegram, or another supported platform."},
+                "receiver": {"type": "STRING", "description": "Recipient name. Optional for the currently open chat."},
+                "message_text": {"type": "STRING", "description": "Exact draft text, required for prepare."}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "send_message",
+        "description": (
+            "Sends a user-authored message through iMessage, WhatsApp, Telegram, Instagram, Discord, or the current chat. "
+            "For Instagram, the first call prepares a visible draft; use action=approve only after explicit user confirmation."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING", "enum": ["send", "approve", "cancel"], "description": "Default: send. Approve/cancel operates on the pending draft."},
+                "receiver":     {"type": "STRING", "description": "Recipient contact name. Optional for current/focused chats and approval actions."},
+                "message_text": {"type": "STRING", "description": "Exact message content. Required for send."},
+                "platform":     {"type": "STRING", "description": "iMessage, WhatsApp, Telegram, Instagram, Discord, or current/focused."}
+            },
+            "required": ["platform"]
+        }
+    },
+    {
+        "name": "email_control",
+        "description": (
+            "Connects Gmail through Google OAuth, checks connection status, reads/searches Gmail, and prepares email. "
+            "Gmail is the default provider; Apple Mail remains an optional macOS fallback. "
+            "For Gmail, prepare opens a visible compose window and types To, Cc/Bcc, Subject, and Body in sequence. "
+            "Every outgoing email is approval-gated: first call action=prepare, then call action=approve "
+            "only after the user explicitly confirms the exact pending recipient, subject, and body."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "enum": ["connect", "status", "disconnect", "inbox", "unread", "search", "read", "prepare", "approve", "cancel"],
+                    "description": "Email operation."
+                },
+                "provider": {
+                    "type": "STRING",
+                    "enum": ["gmail", "apple_mail", "default"],
+                    "description": "Email provider. Default: gmail."
+                },
+                "browser": {
+                    "type": "STRING",
+                    "description": "Browser for the visible Gmail compose window. Default: chrome."
+                },
+                "credentials_path": {
+                    "type": "STRING",
+                    "description": "Path to a Google Desktop OAuth client JSON file, used only for connect."
+                },
+                "limit": {"type": "INTEGER", "description": "Maximum inbox/search results, 1-30."},
+                "query": {"type": "STRING", "description": "Sender or subject text for search."},
+                "message_id": {"type": "STRING", "description": "Message ID returned by inbox/search, required for read."},
+                "to": {"type": "STRING", "description": "Recipient email address or comma-separated addresses."},
+                "cc": {"type": "STRING", "description": "Optional Cc addresses."},
+                "bcc": {"type": "STRING", "description": "Optional Bcc addresses."},
+                "subject": {"type": "STRING", "description": "Exact email subject for prepare."},
+                "body": {"type": "STRING", "description": "Exact email body for prepare."}
+            },
+            "required": ["action"]
         }
     },
     {
@@ -220,6 +408,34 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "media_control",
+        "description": (
+            "Controls music playback, primarily Spotify. Use when the user asks to play, resume, pause, "
+            "stop, toggle, skip, or go back in Spotify, Apple Music, YouTube Music, or the active media player. "
+            "Spotify is the default platform. Pass a song, artist, album, playlist, or Spotify link in query."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "enum": ["play", "pause", "stop", "toggle", "next", "previous", "play_query"],
+                    "description": "Playback command. Use play_query to find a specific song or other item."
+                },
+                "platform": {
+                    "type": "STRING",
+                    "enum": ["spotify", "apple_music", "youtube_music", "system"],
+                    "description": "Music platform. Default: spotify."
+                },
+                "query": {
+                    "type": "STRING",
+                    "description": "Song, artist, album, playlist, or Spotify link for play/play_query."
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "screen_process",
         "description": (
             "Captures and analyzes the screen or webcam image. "
@@ -241,14 +457,9 @@ TOOL_DECLARATIONS = [
         "name": "computer_settings",
         "description": (
             "Controls the computer: volume, brightness, window management, keyboard shortcuts, "
-            "typing text on screen, closing windows, fullscreen, dark mode, WiFi, restart, shutdown, "
+            "typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, "
             "scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. "
-            "Use for ANY single computer control command. NEVER route to agent_task. "
-            "Never use this to shut down, close, quit, exit, or stop JARVIS itself. "
-            "Only use shutdown/restart when the user clearly says computer, system, Mac, or PC; otherwise refuse. "
-            "IMPORTANT: For closing an app window, use action='close_window'. "
-            "Do NOT use action='close', action='close_apps', or action='quit' unless those exact actions exist. "
-            "On macOS/Darwin, closing a window should map to close_window."
+            "Use for ANY single computer control command. NEVER route to agent_task."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -291,11 +502,11 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+        "description": "Manages and opens local files and folders: open, list, create, delete, move, copy, rename, read, write, find, disk usage. Use action=open for a file path; do not use open_app for files.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
+                "action":      {"type": "STRING", "description": "open | list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
                 "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
                 "destination": {"type": "STRING", "description": "Destination path for move/copy"},
                 "new_name":    {"type": "STRING", "description": "New name for rename"},
@@ -438,37 +649,214 @@ TOOL_DECLARATIONS = [
     {
         "name": "jarvis_ui_control",
         "description": (
-            "Controls JARVIS's own interface, not the operating system. "
-            "Use this for JARVIS UI settings, mini/compact mode, graphics quality, theme colors, and docking or detaching JARVIS chat or analytics panels. "
-            "For ambiguous 'settings', ask whether the user means JARVIS settings or macOS System Settings."
+            "Changes JARVIS's own interface. Use when the user asks to open or close the Command Center, "
+            "change the theme or graphics quality, open settings, enter compact mode, toggle fullscreen, or show shortcuts."
         ),
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "action": {
-                    "type": "string",
-                    "enum": [
-                        "open_settings",
-                        "set_graphics",
-                        "set_theme",
-                        "cycle_theme",
-                        "enter_mini",
-                        "exit_mini",
-                        "detach_chat",
-                        "dock_chat",
-                        "detach_analytics",
-                        "dock_analytics"
-                    ]
+                    "type": "STRING",
+                    "enum": ["open_command_center", "close_command_center", "change_theme", "change_graphics_quality", "open_settings", "compact_mode", "fullscreen", "show_shortcuts"],
+                    "description": "The interface action to perform."
                 },
-                "value": {
-                    "type": "string",
-                    "description": "Optional value. For set_graphics, use low, medium, or high. For set_theme, use arc_reactor, stealth_red, vibranium_purple, nanotech_gold, or platinum."
-                }
+                "theme": {
+                    "type": "STRING",
+                    "enum": ["arc_reactor", "stealth_red", "vibranium_purple", "nanotech_gold", "platinum"],
+                    "description": "Required for change_theme."
+                },
+                "graphics_quality": {
+                    "type": "STRING",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Required for change_graphics_quality. Low favors performance, medium is balanced, and high enables full visual detail."
+                },
             },
             "required": ["action"]
         }
     },
-
+    {
+        "name": "deep_research",
+        "description": (
+            "Runs rigorous, multi-query web research and keeps the report in volatile memory unless the user asks to save it. "
+            "Use when the user explicitly asks for deep, thorough, comprehensive, or source-backed research. "
+            "On the first call, ask whether the user wants a background status bar or visible browser research. "
+            "After completion, use this tool again to save the latest report or read it aloud."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "question": {
+                    "type": "STRING",
+                    "description": "The research question. Required on the initial ask call; optional when confirming a pending request."
+                },
+                "execution_mode": {
+                    "type": "STRING",
+                    "enum": ["ask", "background", "visible"],
+                    "description": "Always use ask initially. Background shows a labeled status bar; visible opens a controlled browser and visits sources."
+                },
+                "result_action": {
+                    "type": "STRING",
+                    "enum": ["none", "save_files", "save_desktop", "read_report"],
+                    "description": "Action for the latest completed in-memory report. Use only after the user chooses one of these options."
+                },
+                "depth": {
+                    "type": "STRING",
+                    "enum": ["quick", "standard", "deep"],
+                    "description": "Research breadth. Default: standard."
+                },
+                "focus_areas": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Optional angles, constraints, or subtopics to prioritize."
+                },
+                "max_sources": {
+                    "type": "INTEGER",
+                    "description": "Maximum verified source links to retain, from 5 to 50."
+                },
+                "output_path": {
+                    "type": "STRING",
+                    "description": "Optional explicit path used only with save_files or save_desktop. Research never saves automatically."
+                },
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "create_presentation",
+        "description": (
+            "Creates, edits, redesigns, or extends an editable Microsoft PowerPoint (.pptx) presentation. "
+            "Use this directly whenever the user asks to make a PowerPoint, presentation, "
+            "slide deck, pitch deck, briefing deck, or slideshow. Do not use code_helper, "
+            "file_processor, computer_control, or agent_task. First ask whether the user wants "
+            "a native 3D model, then ask whether they want to see the task or keep it in the background."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {
+                    "type": "STRING",
+                    "description": "Subject, goal, and important content instructions. Required on the initial ask; optional when confirming the pending run mode."
+                },
+                "execution_mode": {
+                    "type": "STRING",
+                    "enum": ["ask", "background", "visible"],
+                    "description": "Always use ask initially. Visible shows real build phases; background keeps a compact status indicator."
+                },
+                "mode": {
+                    "type": "STRING",
+                    "description": "auto | create | edit | redesign | extend. Default: auto."
+                },
+                "title": {
+                    "type": "STRING",
+                    "description": "Optional presentation title."
+                },
+                "audience": {
+                    "type": "STRING",
+                    "description": "Who will view the presentation, such as executives, investors, clients, or students."
+                },
+                "slide_count": {
+                    "type": "INTEGER",
+                    "description": "Final slide count from 3 to 50. Default: inferred or 8."
+                },
+                "tone": {
+                    "type": "STRING",
+                    "description": "Desired writing and visual tone, such as executive, persuasive, technical, or educational."
+                },
+                "theme": {
+                    "type": "STRING",
+                    "description": "Visual theme: jarvis_minimal | editorial | arc_reactor | executive | platinum. Default: jarvis_minimal."
+                },
+                "appearance": {
+                    "type": "STRING",
+                    "enum": ["auto", "light", "dark"],
+                    "description": "Overall slide appearance. Honor light or dark when requested; auto uses the restrained dark JARVIS style."
+                },
+                "transition": {
+                    "type": "STRING",
+                    "enum": ["morph", "fade", "none"],
+                    "description": "Native PowerPoint slide transition. Default: morph, with a fade fallback for older PowerPoint versions."
+                },
+                "source_file": {
+                    "type": "STRING",
+                    "description": "Backward-compatible single source path. Leave empty to use the uploaded file."
+                },
+                "source_files": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Source paths: PDF, Office files, data, text, images, audio, video, or PowerPoint."
+                },
+                "source_urls": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Specific source URLs supplied by the user."
+                },
+                "template_file": {
+                    "type": "STRING",
+                    "description": "Existing PPTX template or deck to preserve for edit/extend operations."
+                },
+                "model_source_file": {
+                    "type": "STRING",
+                    "description": "A PPTX used only as a native 3D model library. Its slides and text are not copied into the new presentation."
+                },
+                "use_native_3d": {
+                    "type": "BOOLEAN",
+                    "description": "The user's answer to the 3D-model question. Omit on the initial call unless the user already explicitly answered."
+                },
+                "three_d_mode": {
+                    "type": "STRING",
+                    "enum": ["ask", "yes", "no"],
+                    "description": "Use ask on the initial call unless the user already explicitly requested or rejected 3D."
+                },
+                "quality": {
+                    "type": "STRING",
+                    "description": "fast | quality | premium. Default: quality."
+                },
+                "language": {
+                    "type": "STRING",
+                    "description": "Optional output language; otherwise infer from the request."
+                },
+                "allow_web_research": {
+                    "type": "BOOLEAN",
+                    "description": "Use broader web research. Set true only after the user explicitly permits web search."
+                },
+                "export_pdf": {
+                    "type": "BOOLEAN",
+                    "description": "Also export a PDF when Microsoft PowerPoint is available. Default: true."
+                },
+                "include_speaker_notes": {
+                    "type": "BOOLEAN",
+                    "description": "Generate editable speaker notes. Default: false."
+                },
+                "output_path": {
+                    "type": "STRING",
+                    "description": "Optional .pptx output path or destination folder."
+                },
+                "open_after_create": {
+                    "type": "BOOLEAN",
+                    "description": "Open the finished PowerPoint after creation. Default: false."
+                },
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "task_status",
+        "description": "Checks or cancels background jobs, including presentation and deep-research jobs.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "get | all | cancel. Default: get."
+                },
+                "task_id": {
+                    "type": "STRING",
+                    "description": "Background task ID for get or cancel."
+                },
+            },
+            "required": []
+        }
+    },
     {
     "name": "file_processor",
     "description": (
@@ -536,46 +924,6 @@ TOOL_DECLARATIONS = [
     }
 },
     {
-        "name": "graphics_quality",
-        "description": (
-            "Sets JARVIS UI graphics quality to low, medium, or high. "
-            "Use this when the user asks to improve performance, reduce lag, save battery, or increase visual quality."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "quality": {
-                    "type": "string",
-                    "description": "Graphics quality: low, medium, or high."
-                }
-            },
-            "required": ["quality"]
-        }
-    },
-
-    {
-        "name": "task_status",
-        "description": (
-            "Checks background agent task statuses. Use this when the user asks whether a task is done, "
-            "what tasks are running, what tasks are pending, what failed, or the status of the last task."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Status query type: last, all, running, pending, completed, failed, or by_id."
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Optional task ID when action is by_id."
-                }
-            },
-            "required": ["action"]
-        }
-    },
-
-    {
         "name": "save_memory",
         "description": (
             "Save an important personal fact about the user to long-term memory. "
@@ -611,24 +959,6 @@ class JarvisLive:
 
     def __init__(self, ui: JarvisUI, voice_name: str = "Puck"):
         self.ui             = ui
-
-        try:
-            from awareness.engine import AwarenessEngine
-            def _awareness_popup(message, popup_type=None):
-                if hasattr(self.ui, "schedule_popup"):
-                    return self.ui.schedule_popup(message, popup_type)
-                return self.ui.write_log(f"AWARENESS: {message}")
-
-            self.awareness_engine = AwarenessEngine(
-                popup_scheduler=_awareness_popup,
-                check_interval=5.0,
-            )
-            self.awareness_engine.start()
-            if hasattr(self.ui, "set_awareness_engine"):
-                self.ui.set_awareness_engine(self.awareness_engine)
-        except Exception as e:
-            self.awareness_engine = None
-            print(f"[Awareness] ⚠️ Could not start awareness engine: {e}")
         self.session        = None
         self.audio_in_queue = None
         self.out_queue      = None
@@ -642,87 +972,39 @@ class JarvisLive:
         self.required_unlock_path: str | None = None
         self.required_unlock_secret: str | None = None
         self.ui.on_text_command = self._on_text_command
-        self.ui.on_compact_action = self._on_compact_action
         self._voice_changed  = threading.Event()
         self._turn_done_event: asyncio.Event | None = None
         self._tts_engine = None
         self._ext_tts_provider = ""
         self._ext_tts_voice_id = ""
         self._ext_tts_api_key = ""
-
-    def _on_compact_action(self, action: str, payload: str = ""):
-        action = str(action or "").strip()
-        payload = str(payload or "")
-
-        if action in ("screen_analysis", "camera_analysis"):
-            angle = "camera" if action == "camera_analysis" else "screen"
-            text = (
-                "Analyze what you see through the camera. Be concise and accurate."
-                if angle == "camera"
-                else "Analyze what is currently visible on my screen. Be concise and accurate."
-            )
-            try:
-                self.ui.show_screen_check_notice(angle)
-                self.ui.write_log(f"SYS: MINI {angle} analysis requested.")
-            except Exception:
-                pass
-            threading.Thread(
-                target=screen_process,
-                kwargs={
-                    "parameters": {"angle": angle, "text": text},
-                    "response": None,
-                    "player": self.ui,
-                    "session_memory": None,
-                },
-                daemon=True,
-            ).start()
-            return
-
-        if action == "messaging":
-            message = payload.strip()
-            if not message:
-                try:
-                    self.ui.show_mini_bubble("No message entered.")
-                except Exception:
-                    pass
-                return
-
-            def _send_current_message():
-                try:
-                    result = send_message(
-                        parameters={
-                            "platform": "current",
-                            "receiver": "",
-                            "message_text": message,
-                        },
-                        response=None,
-                        player=self.ui,
-                        session_memory=None,
-                    )
-                except Exception as e:
-                    result = f"Could not send message: {e}"
-                try:
-                    self.ui.write_log(f"SYS: MINI messaging → {result}")
-                    self.ui.show_mini_bubble(result)
-                except Exception:
-                    pass
-
-            threading.Thread(target=_send_current_message, daemon=True).start()
+        self._current_input_transcript = ""
+        self._last_input_transcript = ""
+        self._last_input_transcript_at = 0.0
+        self._pending_self_quit = False
+        self._pending_self_quit_farewell_received = False
+        self._self_quit_timer = None
+        self._shutdown_requested = threading.Event()
 
     def _on_text_command(self, text: str):
-        # UI commands must be intercepted before Gemini/planner/computer actions.
-        # This prevents ambiguous commands like "open settings" from opening macOS Settings.
-        try:
-            if hasattr(self.ui, "handle_ui_command") and self.ui.handle_ui_command(text):
-                return
-        except Exception:
-            pass
-
         if not self._loop or not self.session:
             return
+        self._current_input_transcript = str(text or "").strip()
+        self._last_input_transcript = self._current_input_transcript
+        self._last_input_transcript_at = time.monotonic()
+        outgoing_text = text
+        if (
+            not getattr(self, "_pending_self_quit", False)
+            and self._is_explicit_self_quit_transcript(self._current_input_transcript)
+        ):
+            self._queue_self_quit_after_farewell()
+            outgoing_text = (
+                "[VERIFIED LOCAL SELF-SHUTDOWN] The user explicitly asked JARVIS to quit. "
+                f'Say exactly: "{SELF_QUIT_GOODBYE}" Do not call a tool and say nothing else.'
+            )
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
+                turns={"parts": [{"text": outgoing_text}]},
                 turn_complete=True
             ),
             self._loop
@@ -730,32 +1012,145 @@ class JarvisLive:
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
-            was_speaking = self._is_speaking
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
             self.ui.set_state("LISTENING")
-        if was_speaking and not value:
-            try:
-                self.ui.start_subtitle_hold()
-            except Exception:
-                pass
-    def speak(self, text: str):
+
+    def speak(self, text: str) -> bool:
         if not self._loop or not self.session:
-            return
-        asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
-            self._loop
+            return False
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.session.send_client_content(
+                    turns={"parts": [{"text": text}]},
+                    turn_complete=True
+                ),
+                self._loop
+            )
+            return True
+        except Exception:
+            return False
+
+    def _speak_vision_result(self, text: str) -> bool:
+        """Send finished vision text through JARVIS's active voice session."""
+        result = " ".join(str(text or "").split())
+        if not result:
+            return False
+        directive = (
+            "[INTERNAL VISION OUTPUT] Read the following vision result to the user "
+            "verbatim. Do not add an introduction, commentary, or a tool call. "
+            f"Vision result: {json.dumps(result, ensure_ascii=False)}"
         )
+        return self.speak(directive)
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    @staticmethod
+    def _is_explicit_self_quit_transcript(text: str) -> bool:
+        """Only match commands that clearly target JARVIS, never the computer."""
+        normalized = " ".join(str(text or "").lower().split())
+        if not normalized:
+            return False
+        if re.search(r"\b(?:computer|mac|pc|system|machine)\b", normalized):
+            return False
+        if re.search(r"\b(?:stop talking|be quiet|cancel|never mind)\b", normalized):
+            return False
+        if normalized in {
+            "quit", "exit", "shutdown", "shut down", "turn off", "power down",
+            "go offline", "goodbye jarvis", "goodbye jarvis please",
+        }:
+            return True
+        return any(pattern.search(normalized) for pattern in _SELF_QUIT_PATTERNS)
+
+    def _queue_self_quit_after_farewell(self) -> None:
+        """Arm shutdown without closing until the response audio is fully drained."""
+        self._pending_self_quit = True
+        self._pending_self_quit_farewell_received = False
+        try:
+            self.ui.write_log("SYS: Shutdown queued; waiting for JARVIS's farewell.")
+        except Exception:
+            pass
+        # A voice model can occasionally omit audio/turn_complete. Do not
+        # leave the user with a permanently armed shutdown in that case.
+        try:
+            if self._self_quit_timer is not None:
+                self._self_quit_timer.cancel()
+            self._self_quit_timer = threading.Timer(8.0, self._force_complete_self_quit)
+            self._self_quit_timer.daemon = True
+            self._self_quit_timer.start()
+        except Exception:
+            pass
+
+    def _force_complete_self_quit(self) -> None:
+        if not getattr(self, "_pending_self_quit", False):
+            return
+        self._pending_self_quit_farewell_received = True
+        self._complete_self_quit_after_audio()
+
+    def _mark_self_quit_farewell_received(self) -> None:
+        if getattr(self, "_pending_self_quit", False):
+            self._pending_self_quit_farewell_received = True
+
+    def _complete_self_quit_after_audio(self) -> bool:
+        """Close through the UI only after a farewell turn has actually completed."""
+        if not (
+            getattr(self, "_pending_self_quit", False)
+            and getattr(self, "_pending_self_quit_farewell_received", False)
+        ):
+            return False
+        self._pending_self_quit = False
+        self._pending_self_quit_farewell_received = False
+        if getattr(self, "_self_quit_timer", None) is not None:
+            self._self_quit_timer.cancel()
+            self._self_quit_timer = None
+        self.request_shutdown()
+        self.ui.handle_ui_command("Quit JARVIS")
+        return True
+
+    def request_shutdown(self) -> None:
+        """Stop live tasks and make the process exit after the UI closes."""
+        shutdown_requested = getattr(self, "_shutdown_requested", None)
+        if shutdown_requested is None:
+            self._shutdown_requested = threading.Event()
+            shutdown_requested = self._shutdown_requested
+        if shutdown_requested.is_set():
+            return
+        shutdown_requested.set()
+        try:
+            session = getattr(self, "session", None)
+            loop = getattr(self, "_loop", None)
+            if session is not None and loop is not None:
+                asyncio.run_coroutine_threadsafe(session.close(), loop)
+            out_queue = getattr(self, "out_queue", None)
+            if out_queue is not None:
+                out_queue.put_nowait(None)
+        except Exception as exc:
+            print(f"[JARVIS] ⚠️ Shutdown session close failed: {exc}")
+
+    def _intercept_ui_tool_call(self, name: str, args: dict) -> str | None:
+        """Safety net for stale models that attempt the removed quit tool action."""
+        action = str(args.get("action") or "").strip().lower()
+        if name != "shutdown_jarvis" and not (
+            name == "jarvis_ui_control" and action == "quit_jarvis"
+        ):
+            return None
+
+        transcript = str(getattr(self, "_current_input_transcript", "") or "")
+        if not transcript:
+            age = time.monotonic() - float(getattr(self, "_last_input_transcript_at", 0.0) or 0.0)
+            if age <= 5.0:
+                transcript = str(getattr(self, "_last_input_transcript", "") or "")
+
+        if not self._is_explicit_self_quit_transcript(transcript):
+            return "Ignored an unverified shutdown request. JARVIS remains online."
+
+        self._queue_self_quit_after_farewell()
+        return f'Shutdown queued. Say exactly: "{SELF_QUIT_GOODBYE}"'
 
     def update_voice(self, voice_name: str):
         self.voice_name = _normalize_voice_name(voice_name)
@@ -840,180 +1235,18 @@ class JarvisLive:
             ),
         )
 
-    def _intercept_ui_tool_call(self, tool_name: str, args: dict):
-        """
-        Intercept Gemini/live tool calls that should control JARVIS UI instead of macOS.
-        Returns a string result if handled/blocked, otherwise None.
-        """
-        try:
-            name = str(tool_name or "").strip()
-            a = args or {}
-
-            def ui_cmd(command: str, result: str):
-                try:
-                    if hasattr(self.ui, "handle_ui_command"):
-                        self.ui.handle_ui_command(command)
-                    else:
-                        self.ui._win._ui_command_requested.emit(command)
-                except Exception:
-                    try:
-                        self.ui._win._handle_ui_command(command)
-                    except Exception:
-                        pass
-                return result
-
-            def ui_log(message: str):
-                try:
-                    self.ui._win._log.append_log(f"JARVIS UI: {message}")
-                except Exception:
-                    pass
-
-            # New explicit JARVIS UI tool.
-            if name == "jarvis_ui_control":
-                action = str(a.get("action", "")).lower().strip()
-                value = str(a.get("value", "")).lower().strip()
-
-                if action in ("open_settings", "show_settings"):
-                    return ui_cmd("Open JARVIS settings", "Opened JARVIS settings.")
-
-                if action in ("set_graphics", "graphics_quality", "change_graphics"):
-                    if value not in ("low", "medium", "high"):
-                        return "Graphics quality must be low, medium, or high."
-                    return ui_cmd(f"Set graphics quality to {value}", f"Graphics quality set to {value.upper()}.")
-
-                if action in ("set_theme", "theme", "change_theme"):
-                    valid_themes = {
-                        "arc_reactor": "arc reactor theme",
-                        "arc reactor": "arc reactor theme",
-                        "blue": "arc reactor theme",
-                        "stealth_red": "stealth red theme",
-                        "stealth red": "stealth red theme",
-                        "red": "stealth red theme",
-                        "vibranium_purple": "vibranium purple theme",
-                        "vibranium purple": "vibranium purple theme",
-                        "purple": "vibranium purple theme",
-                        "nanotech_gold": "nanotech gold theme",
-                        "nanotech gold": "nanotech gold theme",
-                        "gold": "nanotech gold theme",
-                        "platinum": "platinum theme",
-                        "platinum white": "platinum theme",
-                        "white": "platinum theme",
-                    }
-                    command = valid_themes.get(value)
-                    if not command:
-                        return "Theme must be arc_reactor, stealth_red, vibranium_purple, nanotech_gold, or platinum."
-                    return ui_cmd(f"Set theme to {command}", f"Theme set to {command}.")
-
-                if action in ("cycle_theme", "next_theme"):
-                    return ui_cmd("Cycle theme", "Theme changed.")
-
-                if action in ("enter_mini", "turn_mini", "mini", "compact_on"):
-                    return ui_cmd("Turn MINI", "Mini mode enabled.")
-
-                if action in ("exit_mini", "compact_off", "normal_mode"):
-                    return ui_cmd("Exit MINI", "Mini mode disabled.")
-
-                if action == "detach_chat":
-                    return ui_cmd("Detach chat", "Detached chat panel.")
-
-                if action == "dock_chat":
-                    return ui_cmd("Dock chat", "Docked chat panel.")
-
-                if action in ("detach_analytics", "detach_data"):
-                    return ui_cmd("Detach analytics", "Detached analytics panel.")
-
-                if action in ("dock_analytics", "dock_data"):
-                    return ui_cmd("Dock analytics", "Docked analytics panel.")
-
-                return "Unknown JARVIS UI action."
-
-            # Stop ambiguous Settings from becoming macOS System Settings.
-            if name == "open_app":
-                app_name = str(a.get("app_name", "") or a.get("name", "")).strip().lower()
-
-                pending = None
-                try:
-                    pending = getattr(self.ui._win, "_pending_ui_command", None)
-                except Exception:
-                    pending = None
-
-                # User answered the ambiguity with "JARVIS settings", but Gemini tries opening an app.
-                if pending and pending.get("intent") == "settings_choice":
-                    if "jarvis" in app_name or "ui" in app_name or "app settings" in app_name:
-                        try:
-                            self.ui._win._pending_ui_command = None
-                        except Exception:
-                            pass
-                        return ui_cmd("Open JARVIS settings", "Opened JARVIS settings.")
-
-                # Plain "Settings" is ambiguous. Ask instead of opening macOS Settings.
-                if app_name in ("settings", "setting", "preferences", "system preferences"):
-                    try:
-                        self.ui._win._pending_ui_command = {"intent": "settings_choice"}
-                    except Exception:
-                        pass
-                    ui_log("Do you mean JARVIS settings or macOS System Settings?")
-                    return "Do you mean JARVIS settings or macOS System Settings?"
-
-                # Explicit JARVIS settings should open the app's own overlay.
-                if app_name in ("jarvis settings", "jarvis ui settings", "ui settings", "app settings"):
-                    return ui_cmd("Open JARVIS settings", "Opened JARVIS settings.")
-
-            if name == "computer_settings":
-                action = str(a.get("action", "") or "").lower().strip().replace(" ", "_").replace("-", "_")
-                target_text = " ".join(
-                    str(part or "")
-                    for part in (
-                        a.get("description", ""),
-                        a.get("value", ""),
-                        a.get("app_name", ""),
-                        a.get("target", ""),
-                    )
-                ).lower()
-                text = f"{action} {target_text}"
-                if "jarvis" in text and any(word in text for word in ("shutdown", "shut down", "restart", "reboot", "close", "quit", "exit", "stop")):
-                    return "JARVIS self-shutdown is disabled. No computer shutdown was performed."
-                if action in ("shutdown", "restart") and not any(word in target_text for word in ("computer", "system", "mac", "macbook", "pc", "machine")):
-                    return (
-                        f"Refusing to {action} the computer because the target was not explicit. "
-                        f"Say '{action} my computer' if you intend to power-control the machine."
-                    )
-
-            return None
-
-        except Exception as e:
-            try:
-                self.ui.write_log(f"SYS: UI tool intercept failed: {e}")
-            except Exception:
-                pass
-            return None
-
-
-    def _function_call_id(self, fc):
-        return getattr(fc, "id", None) or getattr(fc, "call_id", None)
-
-
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
 
-        intercepted = self._intercept_ui_tool_call(name, args)
-        if intercepted is not None:
-            print(f"[JARVIS] 🧭 UI intercept {name} {args} → {intercepted}", flush=True)
-            return types.FunctionResponse(
-                id=self._function_call_id(fc),
-                name=name,
-                response={"result": intercepted}
-            )
-
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
-        if getattr(self, "awareness_engine", None):
-            try:
-                self.awareness_engine.set_active_tool(name, f"{name} {args}")
-            except Exception as e:
-                print(f"[Awareness] ⚠️ tool start update failed: {e}")
+        intercepted = self._intercept_ui_tool_call(name, args)
+        if intercepted is not None:
+            return types.FunctionResponse(
+                id=fc.id, name=name, response={"result": intercepted}
+            )
 
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -1025,7 +1258,7 @@ class JarvisLive:
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
-                id=self._function_call_id(fc), name=name,
+                id=fc.id, name=name,
                 response={"result": "ok", "silent": True}
             )
 
@@ -1046,12 +1279,42 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "file_controller":
+                if (
+                    args.get("action", "").lower() == "open"
+                    and not args.get("path")
+                    and not args.get("name")
+                ):
+                    current_file = getattr(self.ui, "current_file", None)
+                    if current_file:
+                        args["path"] = current_file
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "check_messages":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: check_messages(parameters=args, response=None, player=self.ui, session_memory=None),
+                )
+                result = r or "No readable messages were found."
+
+            elif name == "prepare_message_reply":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: prepare_message_reply(parameters=args, response=None, player=self.ui, session_memory=None),
+                )
+                result = r or "The message draft could not be prepared."
 
             elif name == "send_message":
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
                 result = r or f"Message sent to {args.get('receiver')}."
+
+            elif name == "email_control":
+                if args.get("action", "").lower() == "connect" and not args.get("credentials_path"):
+                    current_file = getattr(self.ui, "current_file", None)
+                    if current_file and Path(str(current_file)).suffix.lower() == ".json":
+                        args["credentials_path"] = current_file
+                r = await loop.run_in_executor(None, lambda: email_control(parameters=args, response=None, player=self.ui, session_memory=None))
+                result = r or "Email action completed."
 
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
@@ -1061,16 +1324,16 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
                 result = r or "Done."
 
+            elif name == "media_control":
+                r = await loop.run_in_executor(None, lambda: media_control(parameters=args, response=None, player=self.ui))
+                result = r or "Done."
+
             elif name == "screen_process":
-                try:
-                    if hasattr(self.ui, "show_screen_check_notice"):
-                        self.ui.show_screen_check_notice(args.get("angle", "screen"))
-                except Exception:
-                    pass
                 threading.Thread(
                     target=screen_process,
                     kwargs={"parameters": args, "response": None,
-                            "player": self.ui, "session_memory": None},
+                            "player": self.ui, "session_memory": None,
+                            "speak": self._speak_vision_result},
                     daemon=True
                 ).start()
                 result = "Vision module activated. Stay completely silent — vision module will speak directly."
@@ -1095,80 +1358,13 @@ class JarvisLive:
                 from agent.task_queue import get_queue, TaskPriority
                 priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
                 priority = priority_map.get(args.get("priority", "normal").lower(), TaskPriority.NORMAL)
-                task_id  = get_queue(awareness=getattr(self, "awareness_engine", None)).submit(
+                task_id  = get_queue().submit(
                     goal=args.get("goal", ""),
                     priority=priority,
                     speak=self.speak,
+                    immediate=True,
                 )
                 result   = f"Task started (ID: {task_id})."
-
-
-            elif name == "graphics_quality":
-                quality = str(args.get("quality", "medium")).lower().strip()
-                if quality not in ("low", "medium", "high"):
-                    result = "Graphics quality must be low, medium, or high."
-                elif hasattr(self.ui, "handle_ui_command") and self.ui.handle_ui_command(f"set graphics {quality}"):
-                    result = f"Graphics quality set to {quality}. Applied immediately."
-                else:
-                    result = "Could not apply graphics quality."
-
-            elif name == "task_status":
-                from agent.task_queue import get_queue
-                from memory.task_history import get_last, format_history
-
-                action = str(args.get("action", "last")).lower().strip()
-                task_id = str(args.get("task_id", "")).strip()
-                queue = get_queue(awareness=getattr(self, "awareness_engine", None))
-
-                if action == "by_id" and task_id:
-                    status = queue.get_status(task_id)
-                    if not status:
-                        result = f"No task found with ID {task_id}."
-                    else:
-                        result = (
-                            f"Task {status['task_id']} is {status['status']}. "
-                            f"Goal: {status['goal']}. "
-                            f"Error: {status.get('error') or 'None'}."
-                        )
-                else:
-                    statuses = queue.get_all_statuses()
-
-                    if action == "last":
-                        if statuses:
-                            t = statuses[-1]
-                            result = f"Last task {t['task_id']} is {t['status']}. Goal: {t['goal']}."
-                        else:
-                            last = get_last()
-                            if not last:
-                                result = "No background tasks have been started yet."
-                            else:
-                                saved = last.get("saved_file") or "No saved file recorded"
-                                result = (
-                                    f"Last saved task {last.get('task_id')} is {last.get('status')}. "
-                                    f"Goal: {last.get('goal')}. Saved file: {saved}."
-                                )
-
-                    elif action in ("running", "pending", "completed", "failed", "cancelled"):
-                        matches = [t for t in statuses if t["status"] == action]
-                        if not matches:
-                            result = f"No {action} tasks."
-                        else:
-                            result = "\n".join(
-                                f"{t['task_id']} — {t['status']} — {t['goal']}"
-                                for t in matches[-5:]
-                            )
-
-                    elif action == "all":
-                        if statuses:
-                            result = "\n".join(
-                                f"{t['task_id']} — {t['status']} — {t['goal']}"
-                                for t in statuses[-8:]
-                            )
-                        else:
-                            result = format_history(limit=8)
-
-                    else:
-                        result = "Unknown task_status action. Use last, all, running, pending, completed, failed, cancelled, or by_id."
 
             elif name == "web_search":
                 r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
@@ -1194,6 +1390,60 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
 
+            elif name == "jarvis_ui_control":
+                action = str(args.get("action") or "").strip().lower()
+                if action == "change_theme":
+                    theme = str(args.get("theme") or "").strip().lower()
+                    allowed = {"arc_reactor", "stealth_red", "vibranium_purple", "nanotech_gold", "platinum"}
+                    if theme not in allowed:
+                        raise ValueError(f"Unknown JARVIS theme: {theme or 'missing'}")
+                    self.ui.set_theme(theme)
+                    result = f"JARVIS theme changed to {theme.replace('_', ' ')}."
+                elif action == "change_graphics_quality":
+                    quality = str(args.get("graphics_quality") or "").strip().lower()
+                    if quality not in {"low", "medium", "high"}:
+                        raise ValueError(f"Unknown graphics quality: {quality or 'missing'}")
+                    self.ui.set_graphics_quality(quality)
+                    result = f"JARVIS graphics quality changed to {quality}."
+                else:
+                    self.ui.handle_ui_command(action)
+                    result = f"JARVIS interface action completed: {action.replace('_', ' ')}."
+
+            elif name == "deep_research":
+                r = request_deep_research(parameters=args, player=self.ui, speak=self.speak)
+                result = r or "Deep research preference requested."
+
+            elif name == "create_presentation":
+                current_file = getattr(self.ui, "current_file", None)
+                supported_sources = {
+                    ".txt", ".md", ".rst", ".csv", ".json", ".jsonl", ".docx", ".pptx",
+                    ".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp",
+                    ".wav", ".mp3", ".m4a", ".mp4", ".mov", ".avi", ".webm",
+                }
+                if (
+                    not args.get("source_file")
+                    and not args.get("source_files")
+                    and current_file
+                    and Path(str(current_file)).suffix.lower() in supported_sources
+                ):
+                    args["source_files"] = [current_file]
+                r = request_presentation(parameters=args, player=self.ui, speak=self.speak)
+                result = r or "Presentation preference requested."
+
+            elif name == "task_status":
+                from agent.task_queue import get_queue
+
+                queue = get_queue()
+                action = str(args.get("action") or "get").lower()
+                task_id = str(args.get("task_id") or "").strip()
+                if action == "all" or not task_id:
+                    result = json.dumps(queue.get_all_statuses(), ensure_ascii=False)
+                elif action == "cancel":
+                    result = f"Task {task_id} cancelled." if queue.cancel(task_id) else f"Task {task_id} could not be cancelled."
+                else:
+                    status = queue.get_status(task_id)
+                    result = json.dumps(status, ensure_ascii=False) if status else f"Task {task_id} was not found."
+
             else:
                 result = f"Unknown tool: {name}"
 
@@ -1206,21 +1456,18 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
-
-        if getattr(self, "awareness_engine", None):
-            try:
-                self.awareness_engine.record_event(f"Completed direct tool: {name}")
-                self.awareness_engine.clear_active_tool()
-            except Exception as e:
-                print(f"[Awareness] ⚠️ tool complete update failed: {e}")
         return types.FunctionResponse(
-            id=self._function_call_id(fc), name=name,
+            id=fc.id, name=name,
             response={"result": result}
         )
 
     async def _send_realtime(self):
         while True:
+            if self._shutdown_requested.is_set():
+                return
             msg = await self.out_queue.get()
+            if msg is None or self._shutdown_requested.is_set():
+                return
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
@@ -1230,8 +1477,7 @@ class JarvisLive:
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
-
-            if (not jarvis_speaking) and not self.ui.muted:
+            if not jarvis_speaking and not self.ui.muted:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -1247,7 +1493,7 @@ class JarvisLive:
                 callback=callback,
             ):
                 print("[JARVIS] 🎤 Mic stream open")
-                while True:
+                while not self._shutdown_requested.is_set():
                     await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
@@ -1257,12 +1503,16 @@ class JarvisLive:
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
         _new_turn = True
+        turn_had_audio = False
 
         try:
             while True:
+                if self._shutdown_requested.is_set():
+                    return
                 async for response in self.session.receive():
 
                     if response.data:
+                        turn_had_audio = True
                         if self._turn_done_event and self._turn_done_event.is_set():
                             self._turn_done_event.clear()
                         self.audio_in_queue.put_nowait(response.data)
@@ -1274,6 +1524,7 @@ class JarvisLive:
                             txt = _clean_transcript(sc.output_transcription.text)
                             if txt:
                                 out_buf.append(txt)
+                                self._interrupted_text = " ".join(out_buf)
                                 if not self.ui.muted:
                                     if _new_turn:
                                         self.ui.clear_subtitle()
@@ -1283,7 +1534,15 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                if not in_buf:
+                                    self._current_input_transcript = ""
                                 in_buf.append(txt)
+                                self._current_input_transcript = " ".join(in_buf).strip()
+                                if (
+                                    not getattr(self, "_pending_self_quit", False)
+                                    and self._is_explicit_self_quit_transcript(self._current_input_transcript)
+                                ):
+                                    self._queue_self_quit_after_farewell()
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1291,14 +1550,28 @@ class JarvisLive:
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
+                                self._current_input_transcript = full_in
+                                self._last_input_transcript = full_in
+                                self._last_input_transcript_at = time.monotonic()
+                                if (
+                                    not getattr(self, "_pending_self_quit", False)
+                                    and self._is_explicit_self_quit_transcript(full_in)
+                                ):
+                                    self._queue_self_quit_after_farewell()
                                 self.ui.write_log(f"You: {full_in}")
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
                                 self.ui.write_log(f"Jarvis: {full_out}")
+                            if (
+                                getattr(self, "_pending_self_quit", False)
+                                and (full_out or turn_had_audio)
+                            ):
+                                self._mark_self_quit_farewell_received()
                                 
                             out_buf = []
+                            turn_had_audio = False
                             _new_turn = True
 
                     if response.tool_call:
@@ -1310,6 +1583,8 @@ class JarvisLive:
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
+                    if self._shutdown_requested.is_set():
+                        return
         except Exception as e:
             if isinstance(e, genai.errors.APIError) and "1000" in str(e):
                 print("[JARVIS] 🔌 Session closed normally.")
@@ -1333,6 +1608,8 @@ class JarvisLive:
 
         try:
             while True:
+                if self._shutdown_requested.is_set():
+                    return
                 try:
                     chunk = await asyncio.wait_for(
                         self.audio_in_queue.get(),
@@ -1346,6 +1623,8 @@ class JarvisLive:
                     ):
                         self.set_speaking(False)
                         self._turn_done_event.clear()
+                        if self._complete_self_quit_after_audio():
+                            return
                     continue
                 # Skip Gemini audio when external TTS is active
                 if self._tts_engine and self._ext_tts_provider and self._ext_tts_provider != "gemini":
@@ -1367,6 +1646,9 @@ class JarvisLive:
             api_key=api_key,
             http_options={"api_version": "v1beta"}
         )
+        live_model = await asyncio.to_thread(pick_live_model, client, API_CONFIG_PATH)
+        live_model_id = live_model.removeprefix("models/")
+        self.ui.write_log(f"SYS: Gemini Live model selected: {live_model_id}")
 
         start_time = time.time()
         while True:
@@ -1407,7 +1689,7 @@ class JarvisLive:
                 config = self._build_config()
 
                 async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
+                    client.aio.live.connect(model=live_model_id, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session        = session
@@ -1462,34 +1744,18 @@ class JarvisLive:
                     traceback.print_exc()
 
 def main():
+    if os.environ.get("JARVIS_CLI") != "1":
+        print("[JARVIS] Please launch with the JARVIS CLI: jarvis")
+        return
+    if not wait_for_startup_claps():
+        return
     ui = JarvisUI("face.png")
-
-    # If GEMINI_API_KEY is already set (e.g. via .env file), skip the setup
-    # overlay: set os_system config, set the key, and mark ui as ready.
-    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if env_key:
-        os.makedirs(API_CONFIG_PATH.parent, exist_ok=True)
-        try:
-            from config import get_os
-            detected_os = get_os()
-        except Exception:
-            detected_os = {"Darwin": "mac", "Windows": "windows"}.get(
-                __import__("platform").system(), "linux"
-            )
-        # Ensure os_system is written so the config module works
-        try:
-            existing = json.loads(API_CONFIG_PATH.read_text("utf-8")) if API_CONFIG_PATH.exists() else {}
-        except Exception:
-            existing = {}
-        existing["os_system"] = detected_os
-        API_CONFIG_PATH.write_text(json.dumps(existing, indent=4), "utf-8")
-        ui._win._ready = True
-        print("[JARVIS] 🔑 API key loaded from .env — skipping setup overlay.")
 
     def runner():
         ui.wait_for_api_key()
         voice_name = _load_voice_name()
         jarvis = JarvisLive(ui, voice_name)
+        ui.on_quit_requested = jarvis.request_shutdown
 
         # Trial/keyword runtime limiting: set via env `JARVIS_TRIAL_KEYWORD`.
         # If set to any non-empty string, jarvis will run for 3600 seconds (1 hour).
@@ -1510,17 +1776,56 @@ def main():
             jarvis.required_unlock_path = mount_path
             jarvis.ui.write_log(f"SYS: Locked volume required: {mount_path}")
         ui.on_voice_change = jarvis.update_voice
-        ui.on_voice_change = jarvis.update_voice
         def _on_tts_change(provider, api_key, voice_id):
-            jarvis.update_voice(voice_id)
+            if provider == "gemini":
+                jarvis._tts_engine = None
+                jarvis._ext_tts_provider = ""
+                jarvis._ext_tts_voice_id = ""
+                jarvis._ext_tts_api_key = ""
+                jarvis.update_voice(voice_id)
+            else:
+                jarvis._ext_tts_provider = provider
+                jarvis._ext_tts_voice_id = voice_id
+                jarvis._ext_tts_api_key = api_key
+                try:
+                    from actions.tts_engine import TTSEngine
+                    jarvis._tts_engine = TTSEngine(
+                        provider=provider,
+                        api_key=api_key,
+                        voice_id=voice_id,
+                    )
+                    jarvis.ui.write_log(f"SYS: TTS engine ready: {provider} / {voice_id}")
+                    jarvis.ui.write_log("SYS: Gemini audio muted - using external TTS")
+                except Exception as e:
+                    jarvis.ui.write_log(f"SYS: TTS engine error: {e}")
+                # Restart session so new TTS takes effect
+                if jarvis.session and jarvis._loop:
+                    try:
+                        asyncio.run_coroutine_threadsafe(jarvis.session.close(), jarvis._loop)
+                    except Exception as e:
+                        print(f"[JARVIS] Could not close session: {e}")
         ui.on_tts_provider_change = _on_tts_change
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
+        except Exception as exc:
+            message = f"Gemini startup failed: {str(exc)[:180]}"
+            print(f"[JARVIS] ❌ {message}")
+            try:
+                ui.write_log(f"ERR: {message}")
+                ui.set_state("LISTENING")
+            except Exception:
+                pass
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
+
+def cli_main():
+    """Canonical console entry point installed as the `jarvis` command."""
+    os.environ["JARVIS_CLI"] = "1"
+    return main()
+
 
 if __name__ == "__main__":
     main()

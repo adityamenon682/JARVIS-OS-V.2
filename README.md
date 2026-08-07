@@ -2,23 +2,48 @@
 
 Local Gemini Live desktop assistant with a PyQt6 interface, voice interaction, detachable panels, and optional browser, file, screen, and messaging tools.
 
-## Quick start
+JARVIS also includes a dedicated presentation studio that creates, edits,
+redesigns, and extends editable widescreen `.pptx` decks from documents, data,
+images, audio, and video, with optional PDF export. See the
+[usage guide](docs/USAGE.md#6-powerpoint-presentations) for examples.
+
+## HOW TO DOWNLOAD JARVIS
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 cp .env.example .env
-python3 main.py
+./scripts/install_jarvis_cli.sh
+jarvis
 ```
 
 Set `GEMINI_API_KEY` in `.env` before launch. Optional settings such as voice and local API keys are documented in `.env.example`.
+
+### Launch with `jarvis`
+
+The CLI launcher is included in this repository. After cloning and completing
+the one-time setup, install it for your user with:
+
+```bash
+./scripts/install_jarvis_cli.sh
+```
+
+Open a new terminal (or reload your shell profile), then start JARVIS with:
+
+```bash
+jarvis
+```
+
+Alternatively, from an activated virtual environment, `python3 -m pip install -e .`
+installs the same `jarvis` command through the standard Python package entry point.
 
 ## Documentation
 
 - [Usage guide](docs/USAGE.md)
 - [Tutorial](docs/TUTORIAL.md)
+- [Complete QA and bug-audit guide](docs/QA.md)
 - [Contribution notes](CONTRIBUTING.md)
 
 ## Configuration files
