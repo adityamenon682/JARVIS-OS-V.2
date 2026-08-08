@@ -7,15 +7,17 @@ redesigns, and extends editable widescreen `.pptx` decks from documents, data,
 images, audio, and video, with optional PDF export. See the
 [usage guide](docs/USAGE.md#6-powerpoint-presentations) for examples.
 
-## Quick start (macOS/Linux)
+## Quick start (Windows, macOS, Linux)
 
 In Terminal, run:
 
 ```bash
 git clone https://github.com/MAL19INDUSTRIES/JARVIS-OS-V.2.git
 cd JARVIS-OS-V.2
-./scripts/setup_jarvis.sh
+python scripts/setup_jarvis.py
 ```
+
+On Windows, you can double-click `scripts/setup_jarvis.bat` instead.
 
 Open `.env`, add your `GEMINI_API_KEY`, then launch JARVIS:
 
@@ -23,7 +25,12 @@ Open `.env`, add your `GEMINI_API_KEY`, then launch JARVIS:
 jarvis
 ```
 
-You only need to run the setup command once. After that, open Terminal and type `jarvis`.
+You only need to run setup once. Activate `.venv` when opening a new terminal,
+then type `jarvis`.
+
+JARVIS's core UI, Gemini connection, presentations, research, files, and CLI are
+cross-platform. Some computer-control, email, media, and browser integrations
+depend on permissions and available applications on each operating system.
 
 ## Manual setup
 
