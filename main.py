@@ -168,8 +168,17 @@ def wait_for_startup_claps(
         if stream_factory is sd.InputStream:
             try:
                 default_device = sd.default.device
-                if isinstance(default_device, (tuple, list)) and int(default_device[0]) >= 0:
-                    input_device = int(default_device[0])
+                try:
+                    input_index = int(default_device[0])
+                except (TypeError, IndexError, ValueError):
+                    input_index = -1
+                if input_index < 0:
+                    print("[JARVIS] ⚠️ macOS reports no default microphone device.")
+                    if os.environ.get("JARVIS_REQUIRE_CLAP_GATE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                        print("[JARVIS] ⚠️ Continuing without the clap gate; microphone input is unavailable.")
+                        return True
+                    raise RuntimeError("no default microphone device")
+                input_device = input_index
                 device = sd.query_devices(input_device if input_device is not None else None, "input")
                 if int(device.get("max_input_channels", 0)) < 1:
                     raise RuntimeError("no input channels are available")
