@@ -101,6 +101,13 @@ def wait_for_startup_claps(
     if os.environ.get("JARVIS_SKIP_CLAP_GATE", "").strip().lower() in {"1", "true", "yes", "on"}:
         print("[JARVIS] 👏 Startup clap gate bypassed (JARVIS_SKIP_CLAP_GATE).")
         return True
+    # Some macOS/AUHAL configurations expose a nominal input device but reject
+    # every PortAudio operation (PaErrorCode -9986). Avoid repeatedly starting
+    # a failing Core Audio stream; users with a working mic can opt in.
+    if sys.platform == "darwin" and stream_factory is None and os.environ.get("JARVIS_ENABLE_CLAP_GATE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        print("[JARVIS] ⚠️ macOS microphone gate disabled for this audio configuration.")
+        print("[JARVIS] Continuing without clap startup. Set JARVIS_ENABLE_CLAP_GATE=1 to force it.")
+        return True
 
     required = max(1, int(required))
     stream_factory = stream_factory or sd.InputStream
