@@ -211,7 +211,7 @@ def wait_for_startup_claps(
             print("[JARVIS] ⚠️ Continuing without the clap gate; microphone input is unavailable.")
             print("[JARVIS] Restore microphone access to use voice input.")
             return True
-        print("[JARVIS] Set JARVIS_SKIP_CLAP_GATE=1 if microphone access is unavailable.")
+        print("[JARVIS] Clap gate required. Set JARVIS_SKIP_CLAP_GATE=1 to bypass it.")
         return False
 
     print("[JARVIS] ⚡ Two claps detected. Powering up...")
