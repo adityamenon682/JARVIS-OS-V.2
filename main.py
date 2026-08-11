@@ -191,6 +191,16 @@ def wait_for_startup_claps(
         last_error = None
         for sample_rate in sample_rates:
             try:
+                if stream_factory is sd.InputStream:
+                    # Validate the format before constructing a live AUHAL
+                    # stream; macOS can report a device but reject it with
+                    # PaErrorCode -9986 during stream startup.
+                    sd.check_input_settings(
+                        device=input_device,
+                        samplerate=sample_rate,
+                        channels=CHANNELS,
+                        dtype="float32",
+                    )
                 with stream_factory(
                     samplerate=sample_rate,
                     device=input_device,
