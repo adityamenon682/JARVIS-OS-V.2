@@ -1810,7 +1810,13 @@ def main():
         return
     if not wait_for_startup_claps():
         return
-    ui = JarvisUI("face.png")
+    print("[JARVIS] ⚡ Powering up the interface...")
+    try:
+        ui = JarvisUI("face.png")
+    except Exception as exc:
+        print(f"[JARVIS] ❌ Interface startup failed: {exc}")
+        traceback.print_exc()
+        return
 
     def runner():
         ui.wait_for_api_key()
@@ -1880,7 +1886,9 @@ def main():
                 pass
 
     threading.Thread(target=runner, daemon=True).start()
+    print("[JARVIS] ✅ Interface ready.")
     ui.root.mainloop()
+    print("[JARVIS] Interface closed.")
 
 def cli_main():
     """Canonical console entry point installed as the `jarvis` command."""
