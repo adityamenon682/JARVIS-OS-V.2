@@ -207,6 +207,10 @@ def wait_for_startup_claps(
         return False
     except Exception as exc:
         print(f"[JARVIS] ❌ Startup clap microphone unavailable: {exc}")
+        if os.environ.get("JARVIS_REQUIRE_CLAP_GATE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            print("[JARVIS] ⚠️ Continuing without the clap gate; microphone input is unavailable.")
+            print("[JARVIS] Restore microphone access to use voice input.")
+            return True
         print("[JARVIS] Set JARVIS_SKIP_CLAP_GATE=1 if microphone access is unavailable.")
         return False
 
