@@ -163,10 +163,16 @@ def wait_for_startup_claps(
     # available (PaErrorCode -9986). Prefer the device's native rate, then
     # retry standard rates before reporting that the microphone is unavailable.
     sample_rates = [SEND_SAMPLE_RATE, 44100, 48000]
+    input_device = None
     try:
         if stream_factory is sd.InputStream:
             try:
-                device = sd.query_devices(kind="input")
+                default_device = sd.default.device
+                if isinstance(default_device, (tuple, list)) and int(default_device[0]) >= 0:
+                    input_device = int(default_device[0])
+                device = sd.query_devices(input_device if input_device is not None else None, "input")
+                if int(device.get("max_input_channels", 0)) < 1:
+                    raise RuntimeError("no input channels are available")
                 native_rate = int(float(device.get("default_samplerate", 0)))
                 if native_rate > 0:
                     sample_rates.insert(0, native_rate)
@@ -178,9 +184,11 @@ def wait_for_startup_claps(
             try:
                 with stream_factory(
                     samplerate=sample_rate,
+                    device=input_device,
                     channels=CHANNELS,
                     dtype="float32",
-                    blocksize=512,
+                    blocksize=0,
+                    latency="high",
                     callback=callback,
                 ):
                     while not finished.wait(0.05):
