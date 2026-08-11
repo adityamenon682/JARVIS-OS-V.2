@@ -159,18 +159,41 @@ def wait_for_startup_claps(
             finished.set()
 
     print(f"[JARVIS] 👏 Waiting for {required} claps to power up...")
+    # PortAudio on macOS commonly rejects 16 kHz even when the microphone is
+    # available (PaErrorCode -9986). Prefer the device's native rate, then
+    # retry standard rates before reporting that the microphone is unavailable.
+    sample_rates = [SEND_SAMPLE_RATE, 44100, 48000]
     try:
-        with stream_factory(
-            samplerate=SEND_SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="float32",
-            blocksize=512,
-            callback=callback,
-        ):
-            while not finished.wait(0.05):
-                if timeout is not None and time.monotonic() - started_at >= timeout:
-                    print("[JARVIS] ⏱️ Startup clap gate timed out.")
-                    return False
+        if stream_factory is sd.InputStream:
+            try:
+                device = sd.query_devices(kind="input")
+                native_rate = int(float(device.get("default_samplerate", 0)))
+                if native_rate > 0:
+                    sample_rates.insert(0, native_rate)
+            except Exception:
+                pass
+        sample_rates = list(dict.fromkeys(sample_rates))
+        last_error = None
+        for sample_rate in sample_rates:
+            try:
+                with stream_factory(
+                    samplerate=sample_rate,
+                    channels=CHANNELS,
+                    dtype="float32",
+                    blocksize=512,
+                    callback=callback,
+                ):
+                    while not finished.wait(0.05):
+                        if timeout is not None and time.monotonic() - started_at >= timeout:
+                            print("[JARVIS] ⏱️ Startup clap gate timed out.")
+                            return False
+                break
+            except Exception as exc:
+                last_error = exc
+                if finished.is_set():
+                    break
+        else:
+            raise last_error or RuntimeError("no compatible microphone sample rate")
     except KeyboardInterrupt:
         print("\n[JARVIS] Startup cancelled.")
         return False
