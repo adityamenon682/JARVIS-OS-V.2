@@ -7,6 +7,15 @@ redesigns, and extends editable widescreen `.pptx` decks from documents, data,
 images, audio, and video, with optional PDF export. See the
 [usage guide](docs/USAGE.md#6-powerpoint-presentations) for examples.
 
+## Requirements
+
+You need **Python 3.11 or newer** installed to set up and run JARVIS. Confirm
+your Python version before continuing:
+
+```bash
+python --version
+```
+
 ## Quick start (Windows, macOS, Linux)
 
 In Terminal, run:
