@@ -31,6 +31,9 @@ _PENDING_LOCK = threading.RLock()
 _PENDING_EMAIL: dict[str, str] = {}
 _GMAIL_CREDENTIALS_CACHE = ""
 _GMAIL_ACCOUNT_CACHE = ""
+_TENANT_PENDING_EMAILS: dict[str, dict[str, str]] = {}
+_TENANT_GMAIL_CREDENTIALS: dict[str, str] = {}
+_TENANT_GMAIL_ACCOUNTS: dict[str, str] = {}
 
 GMAIL_SCOPES = (
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -128,9 +131,17 @@ def _valid_gmail_client_file(path: Path) -> bool:
 def _save_gmail_credentials(credentials, account: str = "", client_path: str = "") -> bool:
     global _GMAIL_CREDENTIALS_CACHE, _GMAIL_ACCOUNT_CACHE
     payload = credentials.to_json()
-    _GMAIL_CREDENTIALS_CACHE = payload
-    if account:
-        _GMAIL_ACCOUNT_CACHE = account
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    if user_id:
+        _TENANT_GMAIL_CREDENTIALS[user_id] = payload
+        if account:
+            _TENANT_GMAIL_ACCOUNTS[user_id] = account
+    else:
+        _GMAIL_CREDENTIALS_CACHE = payload
+        if account:
+            _GMAIL_ACCOUNT_CACHE = account
     persisted = False
     try:
         store = _secret_store()
@@ -147,7 +158,10 @@ def _save_gmail_credentials(credentials, account: str = "", client_path: str = "
 
 def _load_gmail_credentials():
     Request, Credentials, _InstalledAppFlow, _build = _gmail_dependencies()
-    payload = _GMAIL_CREDENTIALS_CACHE
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    payload = _TENANT_GMAIL_CREDENTIALS.get(user_id, "") if user_id else _GMAIL_CREDENTIALS_CACHE
     if not payload:
         try:
             payload = _secret_store().get(_GMAIL_TOKEN_KEY) or ""
@@ -187,8 +201,15 @@ def _gmail_service():
 
 def _clear_gmail_credentials() -> None:
     global _GMAIL_CREDENTIALS_CACHE, _GMAIL_ACCOUNT_CACHE
-    _GMAIL_CREDENTIALS_CACHE = ""
-    _GMAIL_ACCOUNT_CACHE = ""
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    if user_id:
+        _TENANT_GMAIL_CREDENTIALS.pop(user_id, None)
+        _TENANT_GMAIL_ACCOUNTS.pop(user_id, None)
+    else:
+        _GMAIL_CREDENTIALS_CACHE = ""
+        _GMAIL_ACCOUNT_CACHE = ""
     try:
         store = _secret_store()
         store.delete(_GMAIL_TOKEN_KEY)
@@ -237,8 +258,12 @@ def _gmail_connect(credentials_path: str = "") -> str:
 
 
 def _gmail_account() -> str:
-    if _GMAIL_ACCOUNT_CACHE:
-        return _GMAIL_ACCOUNT_CACHE
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    cached = _TENANT_GMAIL_ACCOUNTS.get(user_id, "") if user_id else _GMAIL_ACCOUNT_CACHE
+    if cached:
+        return cached
     try:
         return _secret_store().get(_GMAIL_ACCOUNT_KEY) or ""
     except Exception:
@@ -895,19 +920,34 @@ def _bounded_limit(value, default: int = 10) -> int:
 
 
 def _set_pending_email(draft: dict[str, str]) -> None:
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _PENDING_LOCK:
-        _PENDING_EMAIL.clear()
-        _PENDING_EMAIL.update(draft)
+        if user_id:
+            _TENANT_PENDING_EMAILS[user_id] = dict(draft)
+        else:
+            _PENDING_EMAIL.clear()
+            _PENDING_EMAIL.update(draft)
 
 
 def _get_pending_email() -> dict[str, str]:
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _PENDING_LOCK:
-        return dict(_PENDING_EMAIL)
+        return dict(_TENANT_PENDING_EMAILS.get(user_id, {})) if user_id else dict(_PENDING_EMAIL)
 
 
 def _clear_pending_email() -> None:
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _PENDING_LOCK:
-        _PENDING_EMAIL.clear()
+        if user_id:
+            _TENANT_PENDING_EMAILS.pop(user_id, None)
+        else:
+            _PENDING_EMAIL.clear()
 
 
 def _parse_rows(raw: str) -> list[dict[str, str]]:

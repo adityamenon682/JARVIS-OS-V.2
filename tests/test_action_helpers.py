@@ -6,6 +6,7 @@ import json
 from email import message_from_bytes
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
@@ -15,6 +16,7 @@ from actions import (
     email_control,
     file_controller,
     file_processor,
+    instagram_browser,
     jarvis_file_stamp,
     media_control,
     open_app,
@@ -444,6 +446,51 @@ class ActionHelperTests(unittest.TestCase):
     def test_outgoing_message_normalization_adds_terminal_punctuation(self):
         normalized = send_message.normalize_outgoing_message_text("hello there")
         self.assertTrue(normalized.endswith("."))
+
+    def test_short_platform_alias_does_not_capture_signal(self):
+        self.assertIs(send_message._resolve_platform("Signal"), send_message._send_signal)
+        self.assertIs(send_message._resolve_platform("IG"), send_message._send_instagram)
+        self.assertIs(
+            send_message._resolve_platform("send on Instagram"),
+            send_message._send_instagram,
+        )
+
+    def test_instagram_approval_rejects_a_changed_chat(self):
+        controller = instagram_browser._InstagramBrowser()
+        controller._pending = {
+            "recipient": "Alex",
+            "message": "Hello there.",
+            "url": "https://www.instagram.com/direct/t/original/",
+        }
+        page = SimpleNamespace(url="https://www.instagram.com/direct/t/different/")
+        with (
+            patch.object(controller, "_open_inbox", return_value=page),
+            patch.object(controller, "_login_required", return_value=False),
+            patch.object(controller, "_dismiss_interruptions"),
+            patch.object(controller, "_send_composer") as send,
+        ):
+            result = controller._send_draft()
+        self.assertIn("chat changed", result)
+        send.assert_not_called()
+
+    def test_instagram_approval_rejects_an_edited_draft(self):
+        controller = instagram_browser._InstagramBrowser()
+        controller._pending = {
+            "recipient": "Alex",
+            "message": "Hello there.",
+            "url": "https://www.instagram.com/direct/t/original/",
+        }
+        page = SimpleNamespace(url="https://www.instagram.com/direct/t/original/")
+        with (
+            patch.object(controller, "_open_inbox", return_value=page),
+            patch.object(controller, "_login_required", return_value=False),
+            patch.object(controller, "_dismiss_interruptions"),
+            patch.object(controller, "_composer_text", return_value="Edited text"),
+            patch.object(controller, "_send_composer") as send,
+        ):
+            result = controller._send_draft()
+        self.assertIn("no longer matches", result)
+        send.assert_not_called()
 
     def test_reply_draft_requires_approval_before_send(self):
         send_message._clear_pending_message()

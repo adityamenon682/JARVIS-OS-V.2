@@ -39,6 +39,7 @@ class Task:
     phase:       str        = field(compare=False, default="Queued")
     artifacts:   list[str]  = field(compare=False, default_factory=list)
     warnings:    list[str]  = field(compare=False, default_factory=list)
+    user_id:     str | None = field(compare=False, default=None)
     cancel_flag: threading.Event = field(compare=False, default_factory=threading.Event)
 
 
@@ -88,6 +89,8 @@ class TaskQueue:
         immediate:   bool = False,
     ) -> str:
 
+        from core.tenant import get_current_user_id
+
         task_id = str(uuid.uuid4())[:8]
         task    = Task(
             priority    = priority.value,
@@ -96,6 +99,7 @@ class TaskQueue:
             goal        = goal,
             speak       = speak,
             on_complete = on_complete,
+            user_id     = get_current_user_id(),
         )
 
         start_now = False
@@ -134,6 +138,8 @@ class TaskQueue:
         kind: str = "presentation",
     ) -> str:
         """Submit a specialized callable without routing it through AgentExecutor."""
+        from core.tenant import get_current_user_id
+
         task_id = str(uuid.uuid4())[:8]
         task = Task(
             priority=priority.value,
@@ -145,6 +151,7 @@ class TaskQueue:
             on_cancel=on_cancel,
             runner=runner,
             kind=kind,
+            user_id=get_current_user_id(),
         )
         with self._condition:
             self._queue.append(task)
@@ -253,6 +260,15 @@ class TaskQueue:
         return None
 
     def _run_task(self, task: Task) -> None:
+        if task.user_id:
+            from core.tenant import tenant_scope
+
+            with tenant_scope(task.user_id):
+                self._run_task_inner(task)
+            return
+        self._run_task_inner(task)
+
+    def _run_task_inner(self, task: Task) -> None:
         print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
         try:
             def update_progress(

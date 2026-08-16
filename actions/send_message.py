@@ -1730,9 +1730,21 @@ _PLATFORM_MAP = [
 
 
 def _resolve_platform(platform_str: str):
-    key = platform_str.lower().strip()
+    key = re.sub(r"\s+", " ", str(platform_str or "").lower()).strip()
+    # Resolve canonical names and short aliases exactly. Substring matching
+    # made aliases such as ``ig`` capture unrelated platforms like ``Signal``.
     for keywords, handler in _PLATFORM_MAP:
-        if any(k in key for k in keywords):
+        if key in keywords:
+            return handler
+    for keywords, handler in _PLATFORM_MAP:
+        if any(
+            len(keyword) >= 4
+            and re.search(
+                rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])",
+                key,
+            )
+            for keyword in keywords
+        ):
             return handler
     return lambda r, m: _desktop_send(platform_str.strip().title(), r, m)
 

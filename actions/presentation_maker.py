@@ -61,6 +61,7 @@ PRESENTATION_3D_SOURCE_QUESTION = (
 _pending_presentation_lock = threading.Lock()
 _pending_presentation_parameters: dict[str, Any] | None = None
 _pending_presentation_created_at = 0.0
+_tenant_pending_presentations: dict[str, tuple[dict[str, Any], float]] = {}
 _presentation_quota_cooldown_until = 0.0
 _presentation_output_locks_guard = threading.Lock()
 _presentation_output_locks: dict[str, threading.Lock] = {}
@@ -110,14 +111,9 @@ _IMAGE_LED_TOPIC_RE = re.compile(
 
 
 def _api_key() -> str:
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if key:
-        return key
-    try:
-        data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    key = str(data.get("gemini_api_key") or data.get("GEMINI_API_KEY") or "").strip()
+    from memory.config_manager import get_gemini_key
+
+    key = str(get_gemini_key() or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
     return key
@@ -1915,20 +1911,33 @@ def _remember_pending_presentation(parameters: dict) -> None:
     global _pending_presentation_parameters, _pending_presentation_created_at
     stored = dict(parameters)
     stored.pop("execution_mode", None)
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _pending_presentation_lock:
-        _pending_presentation_parameters = stored
-        _pending_presentation_created_at = time.monotonic()
+        if user_id:
+            _tenant_pending_presentations[user_id] = (stored, time.monotonic())
+        else:
+            _pending_presentation_parameters = stored
+            _pending_presentation_created_at = time.monotonic()
 
 
 def _take_pending_presentation(parameters: dict) -> dict | None:
     global _pending_presentation_parameters, _pending_presentation_created_at
     supplied = dict(parameters)
     supplied.pop("execution_mode", None)
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _pending_presentation_lock:
-        pending = _pending_presentation_parameters
-        age = time.monotonic() - _pending_presentation_created_at
-        _pending_presentation_parameters = None
-        _pending_presentation_created_at = 0.0
+        if user_id:
+            pending, created_at = _tenant_pending_presentations.pop(user_id, (None, 0.0))
+            age = time.monotonic() - created_at
+        else:
+            pending = _pending_presentation_parameters
+            age = time.monotonic() - _pending_presentation_created_at
+            _pending_presentation_parameters = None
+            _pending_presentation_created_at = 0.0
     if pending is not None and age <= PRESENTATION_PENDING_TTL_SECONDS:
         merged = dict(pending)
         merged.update({

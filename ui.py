@@ -42,6 +42,7 @@ CONFIG_DIR = BASE_DIR / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
 FONT_DIR   = BASE_DIR / "assets" / "fonts"
 UI_SETTINGS_FILE = Path.home() / ".jarvis" / "config" / "settings.json"
+LAYOUT_SETTINGS_FILE = Path.home() / ".jarvis" / "config" / "layout_settings.json"
 
 # Each profile changes both cadence and rendering density.  Keeping this data
 # centralized makes the Settings UI, the renderer, and JARVIS voice commands
@@ -6599,6 +6600,15 @@ class MainWindow(QMainWindow):
     _presentation_progress_hide_sig = pyqtSignal()
     _ui_command_sig = pyqtSignal(str)
 
+    def _restore_detached_panels(self) -> None:
+        """Compatibility hook for persisted panel layouts."""
+
+    def _start_layout_autosave(self) -> None:
+        """Compatibility hook for layout persistence."""
+
+    def _start_auto_graphics_detection(self) -> None:
+        """Compatibility hook for deferred capability detection."""
+
     def __init__(self, face_path: str):
         super().__init__()
         _load_bundled_fonts()
@@ -6752,6 +6762,11 @@ class MainWindow(QMainWindow):
 
         self._command_bar = self._build_footer()
         root.addWidget(self._command_bar)
+
+        # Persistent maker's mark: remains visible in both Focus View and the
+        # expanded Command Center without reading as application status.
+        self._maker_signature = self._build_maker_signature()
+        root.addWidget(self._maker_signature)
         self._set_command_center(False, announce=False)
 
         self._clock_tmr = QTimer(self)
@@ -7156,6 +7171,7 @@ class MainWindow(QMainWindow):
         self._style_splitter()
         self._style_left_nav()
         self._style_command_controls()
+        self._style_maker_signature()
         self._update_theme_btn()
         if hasattr(self, "_mission"):
             self._mission.refresh_theme()
@@ -7646,6 +7662,21 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "_rail_status_dot"):
             self._rail_status_dot.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+
+    def _style_maker_signature(self):
+        strip = getattr(self, "_maker_signature", None)
+        if strip is not None:
+            strip.setStyleSheet(f"""
+                QWidget#JarvisMakerSignature {{
+                    background: {C.BG};
+                    border: none;
+                }}
+            """)
+        label = getattr(self, "_maker_signature_lbl", None)
+        if label is not None:
+            label.setStyleSheet(
+                f"color: {C.TEXT_DIM}; background: transparent; letter-spacing: 1px;"
+            )
 
     def _style_command_controls(self):
         self._style_command_rail()
@@ -8200,6 +8231,31 @@ class MainWindow(QMainWindow):
         self._style_command_controls()
 
         return w
+
+    def _build_maker_signature(self) -> QWidget:
+        """Build the quiet, persistent creator signature beneath the shell."""
+        strip = QWidget()
+        self._maker_signature = strip
+        strip.setObjectName("JarvisMakerSignature")
+        strip.setAccessibleName("JARVIS creator trademark")
+        strip.setFixedHeight(20)
+
+        lay = QHBoxLayout(strip)
+        lay.setContentsMargins(14, 0, 14, 1)
+        lay.setSpacing(0)
+        lay.addStretch(1)
+
+        self._maker_signature_lbl = QLabel("amd.creationz™", strip)
+        self._maker_signature_lbl.setFont(QFont(TECH_FONT, 7, QFont.Weight.Medium))
+        self._maker_signature_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._maker_signature_lbl.setAccessibleName("amd.creationz trademark")
+        self._maker_signature_lbl.setToolTip("JARVIS interface by amd.creationz")
+        lay.addWidget(self._maker_signature_lbl)
+
+        self._style_maker_signature()
+        return strip
 
 
     def _show_left_panel_popup(self):
@@ -9008,6 +9064,11 @@ class JarvisUI:
     @property
     def current_file(self) -> str | None:
         return self._win._drop_zone.current_file()
+
+    @property
+    def _voice_combo(self):
+        """Expose the legacy selector used by the live engine voice fallback."""
+        return self._win._voice_combo
 
     @property
     def on_text_command(self):

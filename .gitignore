@@ -65,6 +65,11 @@ memory/task_history.json
 # Playwright
 playwright/.cache/
 
+# Hosted web build artifacts
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+
 # If you generate local status/log files
 jarvis.log
 status.json

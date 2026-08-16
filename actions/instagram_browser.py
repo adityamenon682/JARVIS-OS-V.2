@@ -495,7 +495,17 @@ class _InstagramBrowser:
     if (messagesHeadingBottom && rect.top <= messagesHeadingBottom + 4) continue;
     const href = rowHref(el);
     const rawText = rowText(el);
-    if (!href && !messagesHeadingBottom) continue;
+    // Instagram's 2026 inbox renders conversation rows as wide role=button
+    // containers without a /direct/ anchor or a literal Messages heading.
+    // Notes use small/tall tiles, so require the stable list-row geometry and
+    // a profile image before treating an unlinked button as a conversation.
+    const structuralChatRow = !!(
+      el.matches && el.matches('div[role="button"], [tabindex="0"]')
+      && el.querySelector && el.querySelector('img')
+      && rect.width >= 220 && rect.height >= 44 && rect.height <= 120
+      && rect.top > 240
+    );
+    if (!href && !messagesHeadingBottom && !structuralChatRow) continue;
     if (!href && !rawText && !profileNameFromAlt(el)) continue;
     let name = rowName(el);
     name = name.replace(/^@/, '').trim();
@@ -739,7 +749,13 @@ class _InstagramBrowser:
     if (!rect || rect.width < 80 || rect.height < 28) continue;
     if (rect.left > leftLimit || rect.left < 60 || rect.right < 120) continue;
     if (messagesHeadingBottom && rect.top <= messagesHeadingBottom + 4) continue;
-    if (!rowHref(el) && !messagesHeadingBottom) continue;
+    const structuralChatRow = !!(
+      el.matches && el.matches('div[role="button"], [tabindex="0"]')
+      && el.querySelector && el.querySelector('img')
+      && rect.width >= 220 && rect.height >= 44 && rect.height <= 120
+      && rect.top > 240
+    );
+    if (!rowHref(el) && !messagesHeadingBottom && !structuralChatRow) continue;
     const first = rowName(el);
     if (!badName(first) && (norm(first) === target || norm(first).includes(target) || target.includes(norm(first)))) {
       el.scrollIntoView({block:'center'});
@@ -889,6 +905,29 @@ class _InstagramBrowser:
         page.wait_for_timeout(150)
         return True
 
+    def _composer_text(self, page) -> str:
+        try:
+            return str(page.evaluate(
+                """
+() => {
+  const visible = (el) => {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    return r.width > 20 && r.height > 10 && s.display !== 'none' && s.visibility !== 'hidden';
+  };
+  const composer = Array.from(document.querySelectorAll(
+    'div[contenteditable="true"][role="textbox"], div[contenteditable="true"], textarea, input[type="text"]'
+  )).filter(visible).sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0] || null;
+  if (!composer) return '';
+  if (composer.tagName && /^(textarea|input)$/i.test(composer.tagName)) return String(composer.value || '');
+  return String(composer.innerText || composer.textContent || '');
+}
+"""
+            ) or "").strip()
+        except Exception:
+            return ""
+
     def _send_composer(self, page) -> bool:
         sent = bool(page.evaluate(
             """
@@ -917,11 +956,12 @@ class _InstagramBrowser:
         ))
         if sent:
             page.wait_for_timeout(500)
-            return True
+            if not self._composer_text(page):
+                return True
         composer = page.locator('div[contenteditable="true"][role="textbox"], div[contenteditable="true"], textarea, input[type="text"]').last
         composer.press("Enter", timeout=3_000)
         page.wait_for_timeout(500)
-        return True
+        return not bool(self._composer_text(page))
 
     def _clear_composer(self, page) -> bool:
         return bool(page.evaluate(
@@ -994,8 +1034,27 @@ class _InstagramBrowser:
         if not self._pending:
             return "Could not find a pending Instagram draft. Ask JARVIS to prepare the Instagram message again."
         self._dismiss_interruptions(page)
+
+        pending_url = str(self._pending.get("url") or "").split("?", 1)[0].rstrip("/")
+        current_url = str(page.url or "").split("?", 1)[0].rstrip("/")
+        if pending_url and current_url != pending_url:
+            return (
+                "Instagram chat changed after the draft was prepared, so I did not send it. "
+                "Return to the original draft or cancel and prepare the message again."
+            )
+
+        expected = re.sub(r"\s+", " ", str(self._pending.get("message") or "")).strip()
+        visible_draft = re.sub(r"\s+", " ", self._composer_text(page)).strip()
+        if not visible_draft or visible_draft != expected:
+            return (
+                "The visible Instagram draft no longer matches the approved message, so I did not send it. "
+                "Cancel and prepare the message again."
+            )
         if not self._send_composer(page):
-            return "Could not find a sendable Instagram draft. Leave the draft visible and try again."
+            return (
+                "Instagram did not clear the approved draft after the send attempt, "
+                "so I cannot confirm it was sent. The draft remains visible."
+            )
         recipient = str(self._pending.get("recipient") or "current chat")
         self._pending = {}
         return f"Message sent to {recipient} via Instagram."

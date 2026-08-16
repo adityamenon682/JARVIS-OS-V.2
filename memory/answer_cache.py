@@ -93,6 +93,14 @@ def get_cached_answer(question: str) -> str | None:
     if not key:
         return None
 
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    if user_id:
+        from api.repositories import get_cached
+
+        return get_cached(user_id, key)
+
     data = _load_cache()
     entry = data.get(key)
     if not isinstance(entry, dict):
@@ -121,6 +129,14 @@ def save_cached_answer(question: str, answer: str) -> None:
         return
 
     key = normalize_question(question)
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
+    if user_id:
+        from api.repositories import put_cached
+
+        put_cached(user_id, key, str(question or "").strip(), clean_answer)
+        return
     data = _load_cache()
     existing = data.get(key, {}) if isinstance(data.get(key), dict) else {}
     data[key] = {

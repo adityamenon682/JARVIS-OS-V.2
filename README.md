@@ -41,6 +41,42 @@ JARVIS's core UI, Gemini connection, presentations, research, files, and CLI are
 cross-platform. Some computer-control, email, media, and browser integrations
 depend on permissions and available applications on each operating system.
 
+## Hosted web application
+
+The repository also contains a multi-user FastAPI service and a Next.js web
+client. Hosted sessions use Postgres for user-scoped memory and configuration,
+Redis for request quotas, encrypted per-user Gemini keys, and Gemini Live over
+an authenticated WebSocket. The desktop launcher continues to use its local
+stores and full local action inventory.
+
+Start the complete local web stack with Docker:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:3000`. To run each service directly:
+
+```bash
+# API
+cp .env.example .env
+alembic upgrade head
+uvicorn api.server:app --reload
+
+# Web client
+cd web
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Production templates are included for Fly.io (`fly.toml`), Render
+(`render.yaml`), and Vercel (`web/vercel.json`). Configure `DATABASE_URL`,
+`REDIS_URL`, `JWT_SECRET`, `JARVIS_ENCRYPTION_KEY`, and `CORS_ORIGINS` on the
+API host. Configure `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_WS_URL` on Vercel.
+The deployment workflow runs manually after the Fly and Vercel repository
+secrets have been added.
+
 ## Manual setup
 
 ```bash
@@ -69,6 +105,20 @@ Open a new terminal (or reload your shell profile), then start JARVIS with:
 ```bash
 jarvis
 ```
+
+Before packaging or releasing the desktop app, run the side-effect-safe
+capability audit:
+
+```bash
+jarvis --self-test
+```
+
+The audit exercises voice/tool contracts, messaging routing and approval
+boundaries, a local browser interaction, isolated file operations, vision,
+agent recovery, and memory. It never sends a real message or performs a live
+desktop mutation. Results that still require a person, account, or physical
+device are labeled `LIVE CHECK REQUIRED`, and a JSON report is written under
+`.qa-artifacts/`.
 
 Alternatively, from an activated virtual environment, `python3 -m pip install -e .`
 installs the same `jarvis` command through the standard Python package entry point.

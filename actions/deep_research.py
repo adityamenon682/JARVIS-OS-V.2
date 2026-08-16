@@ -43,6 +43,8 @@ _pending_parameters: dict | None = None
 _pending_created_at = 0.0
 _latest_result_lock = threading.Lock()
 _latest_result: "ResearchResult | None" = None
+_tenant_pending: dict[str, tuple[dict, float]] = {}
+_tenant_latest_results: dict[str, "ResearchResult"] = {}
 
 
 class ResearchCancelled(RuntimeError):
@@ -532,13 +534,22 @@ def _slug(value: str) -> str:
 
 def _remember_latest_result(result: ResearchResult) -> None:
     global _latest_result
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _latest_result_lock:
-        _latest_result = result
+        if user_id:
+            _tenant_latest_results[user_id] = result
+        else:
+            _latest_result = result
 
 
 def _get_latest_result() -> ResearchResult | None:
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _latest_result_lock:
-        return _latest_result
+        return _tenant_latest_results.get(user_id) if user_id else _latest_result
 
 
 def _save_report(result: ResearchResult, destination: str, output_path: str = "") -> Path:
@@ -775,20 +786,33 @@ def _remember_pending(parameters: dict) -> None:
     global _pending_parameters, _pending_created_at
     stored = dict(parameters)
     stored.pop("execution_mode", None)
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _pending_lock:
-        _pending_parameters = stored
-        _pending_created_at = time.monotonic()
+        if user_id:
+            _tenant_pending[user_id] = (stored, time.monotonic())
+        else:
+            _pending_parameters = stored
+            _pending_created_at = time.monotonic()
 
 
 def _take_pending(parameters: dict) -> dict | None:
     global _pending_parameters, _pending_created_at
     supplied = dict(parameters)
     supplied.pop("execution_mode", None)
+    from core.tenant import get_current_user_id
+
+    user_id = get_current_user_id()
     with _pending_lock:
-        pending = _pending_parameters
-        age = time.monotonic() - _pending_created_at
-        _pending_parameters = None
-        _pending_created_at = 0.0
+        if user_id:
+            pending, created_at = _tenant_pending.pop(user_id, (None, 0.0))
+            age = time.monotonic() - created_at
+        else:
+            pending = _pending_parameters
+            age = time.monotonic() - _pending_created_at
+            _pending_parameters = None
+            _pending_created_at = 0.0
     if pending is not None and age <= PENDING_TTL_SECONDS:
         merged = dict(pending)
         merged.update({key: value for key, value in supplied.items() if value not in (None, "", [])})
