@@ -216,7 +216,7 @@ def critique_renders(
             if path:
                 contents.append(types.Part.from_bytes(data=Path(path).read_bytes(), mime_type="image/png"))
         response = client.models.generate_content(
-            model=os.environ.get("PRESENTATION_QA_MODEL", "gemini-2.5-flash"),
+            model=os.environ.get("PRESENTATION_QA_MODEL", "gemini-3.6-flash"),
             contents=contents,
             config={"response_mime_type": "application/json"},
         )

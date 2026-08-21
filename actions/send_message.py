@@ -1530,7 +1530,7 @@ def _screen_find(description: str, retries: int = 2, delay: float = 0.6) -> tupl
             )
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model="gemini-3.6-flash-lite",
                 contents=[
                     gtypes.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"),
                     prompt,

@@ -60,7 +60,7 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3.6-flash",
         system_instruction=(
             "You are an expert Python developer. "
             "Write clean, complete, working Python code. "
@@ -143,7 +143,7 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
 def _detect_language(text: str) -> str:
     import google.generativeai as genai
     genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+    model = genai.GenerativeModel("gemini-3.6-flash-lite")
     try:
         response = model.generate_content(
             f"What language is this text written in? "
@@ -220,7 +220,7 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
     try:
         import google.generativeai as genai
         genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-3.6-flash")
 
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
@@ -567,7 +567,7 @@ class AgentExecutor:
         try:
             import google.generativeai as genai
             genai.configure(api_key=_get_api_key())
-            model     = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
+            model     = genai.GenerativeModel(model_name="gemini-3.6-flash-lite")
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
 
             result_lines = []

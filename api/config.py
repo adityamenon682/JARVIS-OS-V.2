@@ -29,7 +29,7 @@ class Settings:
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
     )
-    chat_model: str = os.environ.get("JARVIS_CHAT_MODEL", "gemini-2.5-flash")
+    chat_model: str = os.environ.get("JARVIS_CHAT_MODEL", "gemini-3.6-flash")
     auto_create_tables: bool = os.environ.get("AUTO_CREATE_TABLES", "1").lower() in {
         "1", "true", "yes", "on",
     }

@@ -24,7 +24,7 @@ def _base_dir() -> Path:
 
 
 BASE_DIR = _base_dir()
-SYNTHESIS_MODELS = ("gemini-2.5-flash-lite", "gemini-2.5-flash")
+SYNTHESIS_MODELS = ("gemini-3.6-flash-lite", "gemini-3.6-flash")
 
 DEPTH_CONFIG = {
     "quick": {"queries": 3, "max_sources": 10},

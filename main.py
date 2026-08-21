@@ -80,7 +80,7 @@ BASE_DIR        = get_base_dir()
 _load_dotenv()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL = "models/gemini-3.6-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 SUPPORTED_VOICE_NAMES = {

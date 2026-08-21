@@ -47,7 +47,7 @@ def _gemini_client():
     return genai.Client(api_key=_get_api_key())
 
 
-def _generate_content(contents, model: str = "gemini-2.5-flash") -> str:
+def _generate_content(contents, model: str = "gemini-3.6-flash") -> str:
     response = _gemini_client().models.generate_content(
         model=model,
         contents=contents,
@@ -206,7 +206,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
                 prompt = params["instruction"]
 
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=[prompt, img]
             )
             result   = response.text.strip()
@@ -320,7 +320,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             client    = _gemini_client()
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=[prompt_map.get(action, f"Analyze:\n\n{text}")]
             )
             result   = response.text.strip()
@@ -414,7 +414,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
     try:
         client    = _gemini_client()
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=[prompt_map[action]]
         )
         result   = response.text.strip()

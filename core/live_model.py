@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 
-DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_LIVE_MODEL = "models/gemini-3.6-flash-native-audio-preview-12-2025"
 LIVE_ACTION = "bidiGenerateContent"
 
 
