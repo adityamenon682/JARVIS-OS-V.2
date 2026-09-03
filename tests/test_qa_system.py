@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from core import qa_mode
-from core.qa_audit import EXPECTED_TOOLS, declared_tools, repository_findings
+from core.qa_audit import EXPECTED_TOOLS, declared_tools, repository_findings, windows_packaging_findings
 from core.qa_report import CheckResult, Finding, QAReport, redact
 
 
@@ -382,6 +382,53 @@ class AutomatedChecklistTests(unittest.TestCase):
             passed, evidence, _notes = probe._file_probe(Path(directory))
         self.assertTrue(passed)
         self.assertIn("Access denied", evidence["outside_write"])
+
+
+class WindowsPackagingAuditTests(unittest.TestCase):
+    def test_real_repo_build_and_installer_scripts_are_consistent(self):
+        self.assertEqual(windows_packaging_findings(ROOT), [])
+
+    def test_detects_app_name_mismatch_between_build_and_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            (scripts / "build_windows.py").write_text(
+                'APP_NAME = "JARVIS"\nDATA_FILES = []\n', encoding="utf-8"
+            )
+            (scripts / "windows_installer.iss").write_text(
+                'SourceDir "..\\dist\\SomethingElse"\n', encoding="utf-8"
+            )
+            findings = windows_packaging_findings(root)
+            self.assertTrue(
+                any(f.title == "Windows installer source path may not match the build output" for f in findings)
+            )
+
+    def test_detects_missing_bundled_data_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            (scripts / "build_windows.py").write_text(
+                'APP_NAME = "JARVIS"\n'
+                'DATA_FILES = [("core/prompt.txt", "core"), ("does/not/exist.txt", ".")]\n',
+                encoding="utf-8",
+            )
+            (scripts / "windows_installer.iss").write_text(
+                'SourceDir "..\\dist\\JARVIS"\n', encoding="utf-8"
+            )
+            (root / "core").mkdir()
+            (root / "core" / "prompt.txt").write_text("prompt", encoding="utf-8")
+            findings = windows_packaging_findings(root)
+            self.assertTrue(
+                any(f.title == "Windows build references missing data files" for f in findings)
+            )
+            missing_finding = next(f for f in findings if f.title == "Windows build references missing data files")
+            self.assertIn("does/not/exist.txt", missing_finding.actual)
+
+    def test_no_findings_when_packaging_scripts_are_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(windows_packaging_findings(Path(directory)), [])
 
 
 if __name__ == "__main__":

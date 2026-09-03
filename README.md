@@ -138,6 +138,11 @@ This installs PyInstaller (from `requirements-build.txt`) into your existing
 be created for you), then double-click `JARVIS.exe`. See
 `scripts/build_windows.py` for build options such as `--console`.
 
+For a proper installer with a Start Menu entry, optional desktop shortcut,
+and an uninstaller, compile `scripts/windows_installer.iss` with
+[Inno Setup](https://jrsoftware.org/isinfo.php) after the build above. This
+produces `dist/installer/JARVIS-Setup.exe`.
+
 ## Documentation
 
 - [Usage guide](docs/USAGE.md)

@@ -12,6 +12,17 @@ Usage (Windows only):
     --console   keep the terminal window open (useful for debugging /
                 still lets `JARVIS.exe --self-test` print output).
                 Default is windowed (no console), for a normal desktop app.
+
+Known limitation: browser-automation tools (Playwright) download their own
+browser binaries separately (`playwright install`) and are not bundled by
+PyInstaller. Users of a packaged build who want browser tools still need to
+run that once. This is unrelated to the JARVIS UI/voice/file/screen tools,
+which work fully offline-packaged.
+
+To turn the resulting dist/JARVIS/ folder into a real installer (Start Menu
+entry, uninstaller, Program Files placement), run scripts/windows_installer.iss
+through Inno Setup after this script finishes. See that file's header for
+instructions.
 """
 from __future__ import annotations
 
@@ -63,6 +74,13 @@ def clean() -> None:
             shutil.rmtree(path)
 
 
+# Packages known to trip up PyInstaller's static import scan because they
+# load plugins/resources dynamically (Qt plugins, native codecs, etc.).
+# Using --collect-all is broader than strictly necessary but far more
+# reliable than chasing individual "hidden import" errors after each build.
+COLLECT_ALL = ["PyQt6", "cv2", "mss"]
+
+
 def build(windowed: bool) -> int:
     args = [
         "pyinstaller",
@@ -73,6 +91,8 @@ def build(windowed: bool) -> int:
         str(ROOT),
     ]
     args.append("--windowed" if windowed else "--console")
+    for package in COLLECT_ALL:
+        args += ["--collect-all", package]
     for source, dest in DATA_FILES:
         src_path = ROOT / source
         if not src_path.exists():

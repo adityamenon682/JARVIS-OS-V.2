@@ -67,6 +67,43 @@ class CoreResilienceTests(unittest.TestCase):
         result = error_handler.analyze_error({"step": "test"}, "failed", attempt=2, max_attempts=2)
         self.assertEqual(result["decision"], error_handler.ErrorDecision.REPLAN)
 
+    def test_error_handler_uses_google_genai_client_not_deprecated_sdk(self):
+        # agent/error_handler.py must call the current google.genai SDK
+        # (client.models.generate_content), not the deprecated
+        # google.generativeai (GenerativeModel) SDK the QA audit flags.
+        import sys
+        from types import ModuleType
+
+        class FakeConfig:
+            def __init__(self, system_instruction=None, **_kw):
+                self.system_instruction = system_instruction
+
+        fake_types = ModuleType("google.genai.types")
+        fake_types.GenerateContentConfig = FakeConfig
+
+        fake_response = SimpleNamespace(text=json.dumps({
+            "decision": "skip", "reason": "non-critical UI refresh failed",
+            "fix_suggestion": "", "max_retries": 0, "user_message": "Skipping, sir.",
+        }))
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=lambda **kw: fake_response)
+        )
+        fake_genai = ModuleType("google.genai")
+        fake_genai.types = fake_types
+        fake_genai.Client = lambda api_key: fake_client
+
+        with (
+            patch.dict(sys.modules, {"google.genai": fake_genai, "google.genai.types": fake_types}),
+            patch.object(error_handler, "_get_api_key", return_value="fake-key"),
+        ):
+            result = error_handler.analyze_error(
+                {"step": 1, "tool": "web_search", "description": "x", "critical": False},
+                "some error",
+                attempt=1,
+                max_attempts=3,
+            )
+        self.assertEqual(result["decision"], error_handler.ErrorDecision.SKIP)
+
     def test_api_status_round_trip_and_clear(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(
             api_status, "STATUS_PATH", Path(directory) / "status.json"

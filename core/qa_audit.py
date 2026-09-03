@@ -100,4 +100,49 @@ def repository_findings(root: Path) -> list[Finding]:
             "Runtime colors come from theme tokens or are explicitly invariant.",
             f"Found {hardcoded} hexadecimal color literals in ui.py.",
         ))
+
+    findings.extend(windows_packaging_findings(root))
+    return findings
+
+
+def windows_packaging_findings(root: Path) -> list[Finding]:
+    """Static consistency checks between the Windows build and installer scripts.
+
+    Non-mutating: reads scripts/build_windows.py and scripts/windows_installer.iss
+    as text/AST and cross-checks them against the files on disk. Does not run
+    PyInstaller or Inno Setup, so this passes on any platform, including CI.
+    """
+    findings: list[Finding] = []
+    build_script = root / "scripts" / "build_windows.py"
+    installer_script = root / "scripts" / "windows_installer.iss"
+    if not build_script.exists() or not installer_script.exists():
+        return findings
+
+    build_source = build_script.read_text(encoding="utf-8")
+    installer_source = installer_script.read_text(encoding="utf-8")
+
+    app_name_match = re.search(r'APP_NAME\s*=\s*"([^"]+)"', build_source)
+    app_name = app_name_match.group(1) if app_name_match else None
+    if not app_name or f'dist\\{app_name}"' not in installer_source.replace("dist/", "dist\\"):
+        findings.append(Finding(
+            "P1", "Windows installer source path may not match the build output", "Packaging",
+            "windows_installer.iss could point at a folder build_windows.py never creates, "
+            "so compiling the installer would fail or bundle stale files.",
+            "Run scripts/build_windows.py then compile scripts/windows_installer.iss.",
+            "The installer's SourceDir matches build_windows.py's dist/<APP_NAME> output.",
+            f"build_windows.py APP_NAME={app_name!r}",
+        ))
+
+    data_paths = re.findall(r'\("([^"]+)",\s*"[^"]*"\)', build_source)
+    missing_data = [path for path in data_paths if not (root / path).exists()]
+    if missing_data:
+        findings.append(Finding(
+            "P2", "Windows build references missing data files", "Packaging",
+            "PyInstaller would silently skip these (build_windows.py logs and continues), "
+            "so the packaged app could be missing assets or config templates.",
+            "Run scripts/build_windows.py and check its console output for 'Skipping missing data file'.",
+            "Every DATA_FILES entry in build_windows.py exists in the repository.",
+            f"Missing: {missing_data}",
+        ))
+
     return findings
