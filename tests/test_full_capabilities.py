@@ -1,6 +1,11 @@
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from actions.word_intelligence import WordDocumentIntelligence, word_intelligence
 from actions.file_search import FileIntelligence, file_intelligence
@@ -21,8 +26,9 @@ class CapabilitiesTestSuite(unittest.TestCase):
         self.assertIn("SAFETY CONFIRMATION REQUIRED", res)
 
         # When confirmed, it proceeds
-        res_conf = word_intelligence({"action": "replace", "heading": "Intro", "text": "New text", "confirmed": True})
-        self.assertIn("Confirmed", res_conf)
+        with patch.object(WordDocumentIntelligence, "is_windows", return_value=False):
+            res_conf = word_intelligence({"action": "replace", "heading": "Intro", "text": "New text", "confirmed": True})
+            self.assertIn("Confirmed", res_conf)
 
     def test_word_intelligence_outline(self):
         res = word_intelligence({"action": "outline"})

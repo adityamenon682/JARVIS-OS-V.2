@@ -223,7 +223,7 @@ class WordDocumentIntelligence:
 
         app = cls.get_word_app()
         if not app or not cls.get_active_document():
-            return "Microsoft Word isn't open and I couldn't locate the document."
+            return "Confirmed: Microsoft Word isn't open and I couldn't locate the document."
 
         doc = cls.get_active_document()
         try:
@@ -243,11 +243,11 @@ class WordDocumentIntelligence:
                     speed=speed,
                     safety_check=WindowsWordController.is_word_foreground,
                 )
-                return f"Successfully replaced '{target_text_or_heading}' with {typed} typed characters."
+                return f"Confirmed. Successfully replaced '{target_text_or_heading}' with {typed} typed characters."
             else:
-                return f"Could not find '{target_text_or_heading}' in the active Word document."
+                return f"Confirmed: Could not find '{target_text_or_heading}' in the active Word document."
         except Exception as e:
-            return f"Error replacing section in Word: {e}"
+            return f"Confirmed: Error replacing section in Word: {e}"
 
 
 def word_intelligence(

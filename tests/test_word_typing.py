@@ -1,5 +1,11 @@
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from actions.word_typing import (
     SPEED_PROFILES,
