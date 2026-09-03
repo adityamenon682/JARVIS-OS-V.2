@@ -17,6 +17,13 @@ from google.genai import types
 
 try:
     from api import status as jarvis_status
+except Exception:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("jarvis_status", ROOT_DIR / "api" / "status.py")
+    if _spec and _spec.loader:
+        jarvis_status = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(jarvis_status)
+
 except (ImportError, ModuleNotFoundError):
     try:
         import importlib.util
