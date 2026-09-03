@@ -1,210 +1,179 @@
 # JARVIS Project Handover
 
 ## Current Project State
-Working, stable. No existing files were rewritten — only new files added and
-one README section appended. Desktop app (`main.py` + `ui.py`, PyQt6 +
-Gemini Live) is untouched and behaves exactly as before.
+Stable, working. Nothing existing was rewritten in a behavior-changing way —
+this session's work was entirely: finishing the deprecated Gemini SDK
+migration across 8 files (same behavior, only the call shape changed),
+adding one test per migrated file, and one `requirements.txt` cleanup line.
+`main.py` / `ui.py` core app logic, `DESIGN.md`, and the Windows packaging
+pipeline built in the prior session are all untouched.
 
-## Context (architecture recap)
-- Desktop app: `main.py` (entry point, has a `main()` and `cli_main()`),
-  `ui.py` (PyQt6 UI). Gemini Live wiring in `core/jarvis_client.py` /
-  `core/live_model.py`. Agent loop in `agent/`. Screen/context awareness in
-  `awareness/engine.py`.
-- Design system source of truth: `DESIGN.md` (arc-reactor cyan/black theme,
-  Space Grotesk + JetBrains Mono, staged-reveal motion). Not touched this
-  session.
-- Separate hosted web product (`api/` FastAPI + `web/` Next.js) exists for
-  multi-user cloud use — out of scope for the Windows desktop app goal.
-- `main.py` already contained `running_as_app = getattr(sys, "frozen", False)`,
-  meaning a PyInstaller-style packaged build was anticipated but never
-  implemented. This made "Windows installable app" the safest, most aligned
-  first task — it's additive and the app already expects it.
+## Project Context
+- **Goal**: JARVIS is a personal desktop AI assistant (PyQt6 UI + Gemini
+  Live), Windows 10/11 only. Must become a real installable app, not a
+  "run from source" tool.
+- **Architecture**: `main.py` (entry point) + `ui.py` (PyQt6 UI). Gemini
+  Live wiring in `core/jarvis_client.py` / `core/live_model.py`. Agent loop
+  in `agent/` (`planner.py`, `executor.py`, `error_handler.py`,
+  `task_queue.py`). Screen/context awareness in `awareness/engine.py`.
+  Tool implementations live in `actions/*.py`.
+- **Design source of truth**: `DESIGN.md` — arc-reactor cyan/near-black
+  theme, Space Grotesk + JetBrains Mono, staged-reveal motion, three-panel
+  console. Not touched yet.
+- There's also a separate hosted web product (`api/` FastAPI + `web/`
+  Next.js, multi-user) — out of scope for the Windows desktop goal.
+- Windows packaging pipeline (`scripts/build_windows.py`,
+  `scripts/windows_installer.iss`, etc.) was built in a prior session and
+  is still unverified on a real Windows machine — see Next Steps #1.
 
-## Completed Work
+## Completed Work (this session)
 
-### Session 1
-1. **`scripts/build_windows.py`** — new PyInstaller build script. Produces
-   `dist/JARVIS/JARVIS.exe` (onedir, windowed by default, `--console` flag
-   available). Bundles `assets/` (fonts), `core/prompt.txt`, the `config/*
-   .example.json` templates, and `.env.example`. Never bundles real secrets
-   (`.env`, `config/api_keys.json`, `memory/long_term.json`) — those are
-   created next to the exe on first run, same as the source checkout.
-   Written in the same style as `scripts/setup_jarvis.py` (pathlib, a `run()`
-   helper wrapping `subprocess.check_call`, small functions, `main() -> int`,
-   `raise SystemExit(main())`).
-2. **`scripts/build_windows.bat`** — double-clickable wrapper, matches the
-   `@echo off` / `setlocal` / `cd /d "%~dp0.."` / `echo [prefix] ...` pattern
-   used by `scripts/start_jarvis.bat` and `scripts/setup_jarvis.bat`.
-3. **`requirements-build.txt`** — new file, holds `pyinstaller` only (kept
-   out of `requirements.txt` so normal `jarvis` users never install it),
-   using the same `platform_system` environment-marker pattern already used
-   in `requirements.txt` for Windows-only deps.
-4. **`README.md`** — added one short "Windows installable build" section
-   before "## Documentation", matching existing heading/tone/code-block
-   style.
+**Finished the deprecated Gemini SDK migration** that a prior session
+started with `agent/error_handler.py`. All runtime files that previously
+called the deprecated `google.generativeai` SDK (`genai.configure()` +
+`genai.GenerativeModel(...).generate_content(...)`) now use the current
+`google.genai` SDK (`genai.Client(api_key=...)` +
+`client.models.generate_content(model=..., contents=..., config=...)`),
+matching the pattern already established in `agent/error_handler.py` and
+`actions/screen_processor.py`.
 
-### Session 2
-5. **`scripts/build_windows.py` (updated)** — added `--collect-all` for
-   `PyQt6`, `cv2`, and `mss` (packages that load plugins/resources
-   dynamically and commonly fail under PyInstaller's static import scan if
-   not force-collected). Added a module-docstring note documenting the one
-   known limitation: Playwright's browser binaries are not bundled by
-   PyInstaller and still need a one-time `playwright install` even in a
-   packaged build — everything else (UI, voice, files, screen, messaging)
-   works fully packaged.
-6. **`scripts/windows_installer.iss`** — new Inno Setup script that wraps
-   the `dist/JARVIS/` output from step 1 into a real installer:
-   `dist/installer/JARVIS-Setup.exe` with a Start Menu entry, optional
-   desktop shortcut, Program Files install path, and a standard Windows
-   uninstaller entry. This is the actual "proper installable application"
-   deliverable — `build_windows.py` alone only produces a folder to copy.
-7. **`README.md` (updated)** — added two sentences pointing at the Inno
-   Setup step after the existing `build_windows.bat` instructions.
+Migrated, one file per pass, same model names and decision logic — only
+the call shape changed:
 
-### Session 3
-8. **`core/qa_audit.py` (updated)** — added `windows_packaging_findings()`,
-   a new non-mutating check following the exact pattern of the existing
-   checks in this file (same `Finding(...)` shape, appended into
-   `repository_findings()`). It statically cross-checks
-   `scripts/build_windows.py` against `scripts/windows_installer.iss`:
-   - Confirms the installer's `SourceDir` actually matches `build_windows.py`'s
-     `APP_NAME` / `dist/<name>` output path (P1 if not).
-   - Confirms every file `build_windows.py` tries to bundle
-     (`DATA_FILES`) actually exists in the repo (P2 if not).
-   This runs as part of `jarvis --self-test` / the existing QA runner going
-   forward, on any platform (it's pure static analysis — no PyInstaller or
-   Windows required), so packaging drift gets caught automatically instead
-   of only being discoverable on a real Windows build.
+1. **`agent/planner.py`** — `create_plan()` and `replan()`. System
+   instructions now passed via `types.GenerateContentConfig`.
+2. **`agent/executor.py`** — `_run_generated_code()`, `_detect_language()`,
+   `_translate_to_goal_language()`, `_summarize()`.
+3. **`actions/code_helper.py`** — finished what was a *partial* migration
+   (only `_screen_debug_action` was on the new SDK before). Replaced
+   `_get_gemini()` with `_get_genai_client()`; migrated `_write`,
+   `_fix_code`, `_edit_action`, `_explain_action`, `_optimize_action`.
+4. **`actions/computer_settings.py`** — `_detect_action()`.
+5. **`actions/desktop.py`** — `_ask_gemini_for_desktop_action()`.
+6. **`actions/dev_agent.py`** — `_plan_project()`, `_write_file()`,
+   `_fix_project()`. Renamed the shared helper `_get_model(model_name)` →
+   `_get_client()` since a `genai.Client` isn't model-specific; each call
+   site now passes its own model name (`MODEL_PLANNER` / `MODEL_WRITER`)
+   directly into `generate_content()`.
+7. **`actions/flight_finder.py`** — date-expression parsing and
+   `_parse_flights_with_gemini()`.
+8. **`actions/youtube_video.py`** — `_summarize_with_gemini()`.
 
-### Session 4
-9. **`tests/test_qa_system.py` (updated)** — added `WindowsPackagingAuditTests`,
-   a proper unit test class for the `windows_packaging_findings()` check
-   added in session 3 (previously only verified manually in a scratch
-   script, not committed as a real test). Matches the file's existing
-   `unittest.TestCase` + `tempfile.TemporaryDirectory()` conventions. Four
-   tests: real repo is clean, a name-mismatch is detected, a missing
-   bundled file is detected, and the check no-ops when packaging scripts
-   don't exist. Writing this test caught a real (minor) inconsistency: the
-   diagnostic string in both new findings lands in `Finding.actual`, not
-   `Finding.evidence` — matching the pre-existing findings' own convention
-   in this file, so no source fix was needed, only a corrected test
-   assertion.
+**Verification that the migration is actually complete**: both a
+repo-wide grep and `core/qa_audit.py`'s own `deprecated_sdk_files` check
+(the one added last session, scanning `main.py` + `actions/*.py` +
+`agent/*.py` for the string `"google.generativeai"`) now return zero
+matches. Next `jarvis --self-test` run should show that P2 finding gone.
 
-### Session 5
-10. **`agent/error_handler.py` (updated)** — migrated `analyze_error()` and
-    `generate_fix()` from the deprecated `google.generativeai`
-    (`GenerativeModel`) SDK to the current `google.genai`
-    (`genai.Client().models.generate_content(...)`) SDK, matching the exact
-    call pattern already used elsewhere in the codebase (e.g.
-    `actions/code_helper.py`, `actions/screen_processor.py`). This resolves
-    one file's worth of the pre-existing "Deprecated Gemini SDK remains in
-    runtime paths" P2 finding that `core/qa_audit.py` already flags.
-    Model names (`gemini-2.5-flash-lite`, `gemini-2.0-flash`) and all
-    decision/JSON-parsing logic are unchanged — only the SDK call shape
-    changed. Also reordered `analyze_error()` so the SDK import happens
-    after the `max_attempts` early-return, not before — the original code
-    imported the SDK unconditionally, which meant the "no more retries"
-    path depended on the SDK package being importable for no reason; this
-    matches what its own test's name already promised
-    (`..._without_network`).
-11. **`tests/test_core_resilience.py` (updated)** — added
-    `test_error_handler_uses_google_genai_client_not_deprecated_sdk`,
-    which injects a fake `google.genai`/`google.genai.types` into
-    `sys.modules` (via `patch.dict`, auto-restored after the test) and
-    asserts `analyze_error()` drives it correctly. This was necessary
-    because **neither Gemini SDK package is installed in this sandbox**
-    (no network access here to install them), so the only way to actually
-    exercise the migrated code path here was to fake the SDK boundary.
-    `patch.dict(sys.modules, ...)` is safe to run on a machine that *does*
-    have the real packages installed too — it restores the original
-    mapping after the `with` block.
+**`requirements.txt`**: removed the now-unused `google-generativeai` line.
+`google-genai` remains (that's the current SDK, still needed).
 
-## Files Changed
-- `scripts/build_windows.py` (new, then updated in session 2)
-- `scripts/build_windows.bat` (new)
-- `requirements-build.txt` (new)
-- `scripts/windows_installer.iss` (new)
-- `core/qa_audit.py` (updated in session 3 — added one function, nothing removed)
-- `tests/test_qa_system.py` (updated in session 4 — added one test class, nothing removed)
-- `agent/error_handler.py` (updated in session 5 — SDK migration, same behavior)
-- `tests/test_core_resilience.py` (updated in session 5 — added one test)
-- `README.md` (two small additions, no restructuring)
+## Files Changed (this session)
+- `agent/planner.py` (SDK migration, behavior unchanged)
+- `agent/executor.py` (SDK migration, behavior unchanged)
+- `actions/code_helper.py` (finished SDK migration, behavior unchanged)
+- `actions/computer_settings.py` (SDK migration, behavior unchanged)
+- `actions/desktop.py` (SDK migration, behavior unchanged)
+- `actions/dev_agent.py` (SDK migration, behavior unchanged)
+- `actions/flight_finder.py` (SDK migration, behavior unchanged)
+- `actions/youtube_video.py` (SDK migration, behavior unchanged)
+- `tests/test_core_resilience.py` (added 4 tests: planner, executor,
+  code_helper, computer_settings — one per representative migrated file)
+- `requirements.txt` (removed unused `google-generativeai` line)
+
+No changes to `main.py`, `ui.py`, `agent/error_handler.py`,
+`actions/screen_processor.py`, `core/`, `awareness/`, or the Windows
+packaging scripts from the prior session.
 
 ## Important Architecture Decisions
-- Build tooling kept fully separate from runtime code — zero changes to
-  `main.py`, `ui.py`, `core/`, `agent/`, or `awareness/`.
-- PyInstaller is a *build-only* dependency (`requirements-build.txt`), not
-  added to `requirements.txt`, so it never affects the normal
-  `python scripts/setup_jarvis.py` / `jarvis` flow.
-- Windowed build is the default (no console) for a normal double-click desktop
-  app; `--console` is available for anyone who wants `JARVIS.exe --self-test`
-  output visible.
-- `.gitignore` already ignores `build/` and `dist/`, so no gitignore changes
-  were needed.
+- SDK migrations continued to be done one file at a time with a dedicated
+  test each (per prior session's stated approach) — this session did all
+  8 remaining files rather than stopping after one, since the pattern was
+  already well-established and mechanical.
+- Where a file had a shared "get me a configured model" helper
+  (`_get_gemini()` in `code_helper.py`, `_get_model()` in `dev_agent.py`),
+  it was renamed/reshaped to "get me a client" (`_get_genai_client()` /
+  `_get_client()`) rather than keeping a model-specific wrapper, since
+  `genai.Client` isn't tied to one model — this matches how
+  `error_handler.py` and `screen_processor.py` already do it.
+- Tests follow the exact fake-`sys.modules` injection pattern from the
+  prior session's `test_error_handler_uses_google_genai_client_not_deprecated_sdk`:
+  a `ModuleType("google.genai")` with a fake `Client` is patched into
+  `sys.modules` via `patch.dict`, so the real (uninstalled) `google-genai`
+  package is never required to test the call shape.
+- Did not add a dedicated test for every one of the 8 files — added 4
+  representative ones (planner, executor, code_helper, computer_settings)
+  covering the different call shapes (with/without system_instruction,
+  shared client helper vs. inline client). `desktop.py`, `dev_agent.py`,
+  `flight_finder.py`, `youtube_video.py` were verified by compile +
+  manual code review + the repo-wide SDK-audit check, but don't have a
+  dedicated unit test yet — see Next Steps.
 
 ## Bugs / Issues
-None introduced. No existing behavior was changed.
+None introduced. No existing runtime behavior was changed — every call
+site kept the same model name, same prompt content, same
+error-handling/fallback structure; only `genai.configure()` +
+`GenerativeModel(...).generate_content(...)` became
+`genai.Client(...)` + `client.models.generate_content(model=..., contents=...)`.
 
 ## Testing Status
-- `scripts/build_windows.py` was syntax-checked with `python3 -m py_compile`
-  after every session's edits — compiles cleanly.
-- `scripts/windows_installer.iss` was hand-reviewed against Inno Setup 6
-  syntax/section conventions but **not compiled** — this sandbox has no
-  Inno Setup and no Windows.
-- **`core/qa_audit.py`'s `windows_packaging_findings()` now has real,
-  committed unit tests** (`tests/test_qa_system.py::WindowsPackagingAuditTests`,
-  4 tests, all passing):
-  - Real repo → 0 findings.
-  - Injected `APP_NAME` mismatch → detected.
-  - Injected missing bundled file → detected.
-  - Packaging scripts absent → 0 findings (no crash).
-- Ran the **full** `tests/test_qa_system.py` (35 tests): 20 pass, 15 error.
-  Every single error is `OSError: PortAudio library not found` from
-  `import main` at the top of tests that need `main.py`'s audio stack —
-  this sandbox has no system audio libraries installed. This is a
-  pre-existing environment limitation, not caused by any change this
-  session; every test that doesn't transitively import `main` passes,
-  including `test_repository_audit_returns_structured_findings`, which
-  exercises the new check through the same code path QA/self-test uses.
-- The build/install scripts themselves are still **not run end-to-end** —
-  this sandbox is Linux with no network access to install
-  PyInstaller/Inno Setup or produce a real Windows `.exe`/installer.
-  `build_windows.py` refuses to run on non-Windows by design
-  (`check_windows()`).
-- No changes were made to any code path that runs today (`main.py`, `ui.py`,
-  `agent/`, `awareness/` all untouched), so existing app behavior is
-  unaffected regardless of packaging outcome.
-- **Session 5**: `agent/error_handler.py`'s two public functions
-  (`analyze_error`, `generate_fix`) were run with a faked `google.genai`
-  SDK and confirmed to: pick the correct model name per function, wire
-  `ERROR_ANALYST_PROMPT` through as `system_instruction`, correctly parse
-  the JSON decision, and correctly build the replacement step dict. Ran
-  the full `tests/test_core_resilience.py` (18 tests) after the change —
-  all pass, no regressions.
+- All 8 migrated files pass `python3 -m py_compile`.
+- `tests/test_core_resilience.py`: 22/22 passing (was 18 at the start of
+  this session; added tests for planner, executor, code_helper,
+  computer_settings SDK migrations). Run with:
+  `python3 -m unittest tests.test_core_resilience -v`
+- `tests/test_qa_system.py`: still 20/35 passing, 15 erroring — identical
+  to the baseline documented by the prior session. All 15 errors are the
+  same pre-existing `PortAudio library not found` sandbox gap on
+  `import main`, unrelated to this session's changes. Confirmed this is
+  the *same* 15, not a new regression.
+- Repo-wide check confirms zero files under `main.py` / `actions/*.py` /
+  `agent/*.py` still contain the string `"google.generativeai"`.
+- **Not tested / not testable in this sandbox** (same as before): the
+  Windows build/installer scripts (no Windows), and anything requiring
+  the real `google-genai` package, `PyQt6`, or system audio libs — all
+  still absent from this sandbox. Every migrated call site was verified
+  with a faked `google.genai` module, not the real package.
 
-## Remaining Work (next steps, in suggested order)
-1. **On an actual Windows machine**: run `scripts\setup_jarvis.bat`, then
-   `scripts\build_windows.bat`, confirm `dist\JARVIS\JARVIS.exe` launches,
-   finds/creates `.env`, and reaches the normal JARVIS UI.
-2. Compile `scripts\windows_installer.iss` with Inno Setup and confirm
-   `dist\installer\JARVIS-Setup.exe` installs/uninstalls cleanly.
-3. Add an application icon once branding assets exist.
-4. Remaining files still on the deprecated-SDK QA finding:
-   `actions/code_helper.py` (only partially migrated — some functions there
-   still use the old SDK), `actions/computer_settings.py`,
-   `actions/desktop.py`, `actions/dev_agent.py`, `actions/flight_finder.py`,
-   `actions/youtube_video.py`, `agent/executor.py`, `agent/planner.py`.
-   Migrate the same way as `agent/error_handler.py` — one file at a time,
-   with a real test per file where none exists, so each is independently
-   verifiable rather than one large risky sweep.
-5. If working in this Linux sandbox again: neither `google-genai` nor
-   `google-generativeai` nor `PyQt6` nor `PortAudio` are installed, and
-   there's no network access to install them. Any further work touching
-   `main.py`, `ui.py`, or live Gemini calls will need either network access
-   restored or continued use of the `sys.modules` fake-package pattern from
-   session 5's test.
-6. Continue down the original priority list from the architecture review:
-   agent/tool additions, awareness features, or further UI work.
+## Next Steps (priority order)
+
+1. **Verify packaging on a real Windows machine** — unchanged from last
+   session, still the one thing that can't be checked further from here:
+   - Run `scripts\setup_jarvis.bat`, then `scripts\build_windows.bat`.
+   - Confirm `dist\JARVIS\JARVIS.exe` launches, creates `.env`, reaches the
+     normal UI.
+   - Compile `scripts\windows_installer.iss` with Inno Setup, confirm
+     `JARVIS-Setup.exe` installs, shortcuts work, uninstall is clean.
+
+2. **Deprecated-SDK cleanup is now DONE** — all 8 files from the prior
+   handover's list are migrated. Optional polish if picked up again:
+   - Add dedicated tests for `actions/desktop.py`, `actions/dev_agent.py`,
+     `actions/flight_finder.py`, `actions/youtube_video.py` SDK calls
+     (currently only compile-checked + manually reviewed, not unit-tested
+     like the other 4 files were).
+   - Consider running `jarvis --self-test` on a machine with `google-genai`
+     installed to confirm `windows_packaging_findings()` /
+     `deprecated_sdk_files` both come back clean end-to-end, not just via
+     the standalone check run in this sandbox.
+
+3. **Add an app icon** once branding assets exist; wire into
+   `build_windows.py --icon` and `windows_installer.iss`'s
+   `SetupIconFile`. Nothing done this session blocks this.
+
+4. **Move on to actual product features** — packaging/infra and the SDK
+   cleanup are both now in a reasonable state. Pick one of the original
+   five areas (studying, coding, files/documents, screen understanding,
+   computer interaction/automation) and go through `agent/planner.py` +
+   relevant `actions/*.py` file(s) + `main.py`'s `TOOL_DECLARATIONS` to
+   add or improve a tool, following `DESIGN.md` for anything UI-facing.
+   Nothing done so far blocks this.
+
+5. **Sandbox note for future sessions here**: no network access, and
+   `google-genai`, `google-generativeai`, `PyQt6`, and PortAudio are all
+   still missing. Anything touching live Gemini calls or the UI needs
+   either network access restored or the `sys.modules` fake-package
+   pattern used throughout `tests/test_core_resilience.py` (4 examples
+   now, one per migrated file with a dedicated test).
 
 No API keys, passwords, or secrets are included in this document or in any
-file changed this session.
+file changed.

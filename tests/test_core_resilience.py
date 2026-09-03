@@ -7,8 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from actions import computer_settings, file_controller, flight_finder, instagram_browser, weather_report, youtube_video
-from agent import error_handler
+from actions import code_helper, computer_settings, file_controller, flight_finder, instagram_browser, weather_report, youtube_video
+from agent import error_handler, executor, planner
 from agent.task_queue import TaskPriority, TaskQueue
 from api import status as api_status
 from awareness.engine import AwarenessEngine
@@ -103,6 +103,146 @@ class CoreResilienceTests(unittest.TestCase):
                 max_attempts=3,
             )
         self.assertEqual(result["decision"], error_handler.ErrorDecision.SKIP)
+
+    def test_planner_uses_google_genai_client_not_deprecated_sdk(self):
+        # agent/planner.py must call the current google.genai SDK
+        # (client.models.generate_content), not the deprecated
+        # google.generativeai (GenerativeModel) SDK the QA audit flags.
+        import sys
+        from types import ModuleType
+
+        class FakeConfig:
+            def __init__(self, system_instruction=None, **_kw):
+                self.system_instruction = system_instruction
+
+        fake_types = ModuleType("google.genai.types")
+        fake_types.GenerateContentConfig = FakeConfig
+
+        fake_plan = json.dumps({
+            "steps": [
+                {"step": 1, "tool": "web_search", "description": "look it up",
+                 "parameters": {"query": "test"}, "depends_on": [], "critical": False}
+            ]
+        })
+        fake_response = SimpleNamespace(text=fake_plan)
+        captured = {}
+
+        def fake_generate_content(**kw):
+            captured.update(kw)
+            return fake_response
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=fake_generate_content)
+        )
+        fake_genai = ModuleType("google.genai")
+        fake_genai.types = fake_types
+        fake_genai.Client = lambda api_key: fake_client
+
+        with (
+            patch.dict(sys.modules, {"google.genai": fake_genai, "google.genai.types": fake_types}),
+            patch.object(planner, "_get_api_key", return_value="fake-key"),
+        ):
+            plan = planner.create_plan("look something up")
+
+        self.assertEqual(plan["steps"][0]["tool"], "web_search")
+        self.assertEqual(captured["model"], "gemini-2.5-flash-lite")
+        self.assertEqual(captured["config"].system_instruction, planner.PLANNER_PROMPT)
+
+    def test_executor_summarize_uses_google_genai_client_not_deprecated_sdk(self):
+        # agent/executor.py must call the current google.genai SDK
+        # (client.models.generate_content), not the deprecated
+        # google.generativeai (GenerativeModel) SDK the QA audit flags.
+        import sys
+        from types import ModuleType
+
+        fake_response = SimpleNamespace(text="All done, sir. The report was saved to report.txt.")
+        captured = {}
+
+        def fake_generate_content(**kw):
+            captured.update(kw)
+            return fake_response
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=fake_generate_content)
+        )
+        fake_genai = ModuleType("google.genai")
+        fake_genai.Client = lambda api_key: fake_client
+
+        agent_executor = executor.AgentExecutor()
+        with (
+            patch.dict(sys.modules, {"google.genai": fake_genai}),
+            patch.object(executor, "_get_api_key", return_value="fake-key"),
+        ):
+            summary = agent_executor._summarize(
+                "research and save something",
+                [{"description": "searched the web"}],
+                speak=None,
+                step_results={"1": "Saved to report.txt"},
+            )
+
+        self.assertIn("report.txt", summary)
+        self.assertEqual(captured["model"], "gemini-2.5-flash-lite")
+
+    def test_code_helper_write_uses_google_genai_client_not_deprecated_sdk(self):
+        # actions/code_helper.py must call the current google.genai SDK
+        # (client.models.generate_content), not the deprecated
+        # google.generativeai (GenerativeModel) SDK the QA audit flags.
+        import sys
+        from types import ModuleType
+
+        fake_response = SimpleNamespace(text="print('hello')")
+        captured = {}
+
+        def fake_generate_content(**kw):
+            captured.update(kw)
+            return fake_response
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=fake_generate_content)
+        )
+        fake_genai = ModuleType("google.genai")
+        fake_genai.Client = lambda api_key: fake_client
+
+        with tempfile.TemporaryDirectory() as directory, (
+            patch.dict(sys.modules, {"google.genai": fake_genai})
+        ), (
+            patch.object(code_helper, "_get_api_key", return_value="fake-key")
+        ):
+            out_path = Path(directory) / "out.py"
+            code, path = code_helper._write("print hello", "python", str(out_path))
+
+        self.assertEqual(code, "print('hello')")
+        self.assertEqual(path, out_path)
+        self.assertEqual(captured["model"], code_helper.GEMINI_MODEL)
+
+    def test_computer_settings_detect_action_uses_google_genai_client_not_deprecated_sdk(self):
+        # actions/computer_settings.py must call the current google.genai SDK
+        # (client.models.generate_content), not the deprecated
+        # google.generativeai (GenerativeModel) SDK the QA audit flags.
+        import sys
+        from types import ModuleType
+
+        fake_response = SimpleNamespace(text=json.dumps({"action": "volume_set", "value": 50}))
+        captured = {}
+
+        def fake_generate_content(**kw):
+            captured.update(kw)
+            return fake_response
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=fake_generate_content)
+        )
+        fake_genai = ModuleType("google.genai")
+        fake_genai.Client = lambda api_key: fake_client
+
+        with (
+            patch.dict(sys.modules, {"google.genai": fake_genai}),
+            patch.object(computer_settings, "_get_api_key", return_value="fake-key"),
+        ):
+            result = computer_settings._detect_action("set volume to 50")
+
+        self.assertEqual(result["action"], "volume_set")
+        self.assertEqual(captured["model"], "gemini-2.5-flash-lite")
 
     def test_api_status_round_trip_and_clear(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(
