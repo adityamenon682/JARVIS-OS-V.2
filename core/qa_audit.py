@@ -16,6 +16,8 @@ EXPECTED_TOOLS = {
     "desktop_control", "code_helper", "dev_agent", "agent_task",
     "computer_control", "game_updater", "flight_finder", "jarvis_ui_control",
     "file_processor", "create_presentation", "deep_research", "graphics_quality", "task_status", "save_memory",
+    "word_typing", "word_intelligence", "file_intelligence", "monitor_awareness",
+    "study_tutor", "memory_control", "provider_control", "background_control",
 }
 
 

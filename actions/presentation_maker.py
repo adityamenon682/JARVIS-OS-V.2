@@ -43,7 +43,7 @@ from actions.presentations.sources import ingest_sources, source_manifest
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-DEFAULT_MODEL = "gemini-3.6-flash"
+DEFAULT_MODEL = "gemini-2.5-flash"
 PRESENTATION_PENDING_TTL_SECONDS = 15 * 60
 PRESENTATION_QUOTA_COOLDOWN_SECONDS = 5 * 60
 PRESENTATION_RUN_MODE_QUESTION = (

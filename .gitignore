@@ -66,6 +66,8 @@ memory/task_history.json
 playwright/.cache/
 
 # Hosted web build artifacts
+node_modules/
+bun.lock
 web/node_modules/
 web/.next/
 web/tsconfig.tsbuildinfo

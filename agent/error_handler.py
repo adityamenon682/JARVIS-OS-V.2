@@ -92,7 +92,7 @@ def analyze_error(
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-3.6-flash-lite",
+        model_name="gemini-2.5-flash-lite",
         system_instruction=ERROR_ANALYST_PROMPT
     )
 

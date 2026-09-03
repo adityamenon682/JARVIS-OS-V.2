@@ -39,6 +39,53 @@ ABSOLUTE RULES:
 
 AVAILABLE TOOLS AND THEIR PARAMETERS:
 
+word_typing
+  text: string (required) — writing or text to type into Microsoft Word
+  document_name: string (optional) — title or file name of the Word document
+  document_path: string (optional) — path to .docx to open if Word is closed
+  speed: "human" | "normal" | "slow" | "fast" | "very_fast" | "instant" (optional, default: human)
+  mode: "verbatim" | "polish" | "formal" | "clear" | "summarize" (optional, default: verbatim)
+  placement: "cursor" | "end" | "beginning" | "new_paragraph" (optional, default: cursor)
+  instruction: string (optional) — e.g. "make it formal", "clarify grammar"
+
+word_intelligence
+  action: "insert" | "outline" | "replace" (required)
+  heading: string (optional) — target heading name
+  paragraph: integer (optional) — target paragraph index
+  text: string (optional) — text to type under heading or paragraph
+  speed: "human" | "normal" | "slow" | "fast" | "very_fast" | "instant" (optional)
+  confirmed: boolean (required for destructive replacements)
+
+file_intelligence
+  action: "search" | "read" | "authorize" | "list_folders" (required)
+  query: string (optional) — file search term or topic
+  path: string (optional) — file or folder path
+  file_ext: string (optional) — e.g. "docx", "pdf", "py"
+
+monitor_awareness
+  action: "capture" | "list" | "detect" (required)
+  monitor: "primary" | "other" | "1" | "2" (optional)
+  question: string (optional) — what to analyze on screen
+
+study_tutor
+  topic: string (required) — subject or question to study/learn
+  attempt: string (optional) — user's attempt or thoughts
+  mode: "guide" | "explain" | "quiz" | "check" (optional, default: guide)
+
+memory_control
+  action: "search" | "store" | "forget" | "list" (required)
+  query: string (for search)
+  key: string (for store/forget)
+  value: string (for store)
+  category: "notes" | "preferences" | "projects" | "identity" | "wishes" (optional)
+
+provider_control
+  action: "status" | "select" | "list" (required)
+  provider: "gemini" | "ollama" | "claude" | "openai" (for select)
+
+background_control
+  action: "minimize" | "restore" | "status" (required)
+
 open_app
   app_name: string (required)
 
@@ -262,7 +309,7 @@ def create_plan(goal: str, context: str = "") -> dict:
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-3.6-flash-lite",
+        model_name="gemini-2.5-flash-lite",
         system_instruction=PLANNER_PROMPT
     )
 
@@ -431,7 +478,7 @@ def replan(goal: str, completed_steps: list, failed_step: dict, error: str) -> d
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-3.6-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=PLANNER_PROMPT
     )
 

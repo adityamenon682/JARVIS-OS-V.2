@@ -107,7 +107,7 @@ def _ask_gemini_for_desktop_action(task: str) -> str:
 
     import google.generativeai as genai
     genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-3.6-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
     desktop = str(_get_desktop())
 

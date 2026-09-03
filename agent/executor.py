@@ -60,7 +60,7 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-3.6-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=(
             "You are an expert Python developer. "
             "Write clean, complete, working Python code. "
@@ -143,7 +143,7 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
 def _detect_language(text: str) -> str:
     import google.generativeai as genai
     genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-3.6-flash-lite")
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     try:
         response = model.generate_content(
             f"What language is this text written in? "
@@ -220,7 +220,7 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
     try:
         import google.generativeai as genai
         genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-3.6-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
@@ -245,7 +245,39 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
 
 def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
 
-    if tool == "open_app":
+    if tool in ("word_typing", "type_into_word"):
+        from actions.word_typing import word_typing
+        return word_typing(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("word_intelligence", "word_doc_intel"):
+        from actions.word_intelligence import word_intelligence
+        return word_intelligence(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("file_intelligence", "file_search"):
+        from actions.file_search import file_intelligence
+        return file_intelligence(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("monitor_awareness", "screen_intel"):
+        from actions.monitor_awareness import monitor_awareness
+        return monitor_awareness(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("study_tutor", "tutor_mode"):
+        from actions.study_tutor import study_tutor
+        return study_tutor(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("memory_control", "manage_memory"):
+        from actions.memory_tool import memory_control
+        return memory_control(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("provider_control", "manage_provider"):
+        from core.provider_manager import provider_control
+        return provider_control(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool in ("background_control", "background_runner"):
+        from actions.background_runner import background_control
+        return background_control(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "open_app":
         from actions.open_app import open_app
         return open_app(parameters=parameters, player=None) or "Done."
 
@@ -567,7 +599,7 @@ class AgentExecutor:
         try:
             import google.generativeai as genai
             genai.configure(api_key=_get_api_key())
-            model     = genai.GenerativeModel(model_name="gemini-3.6-flash-lite")
+            model     = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
 
             result_lines = []

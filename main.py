@@ -58,6 +58,14 @@ computer_control = _lazy_action("actions.computer_control", "computer_control")
 game_updater = _lazy_action("actions.game_updater", "game_updater")
 request_presentation = _lazy_action("actions.presentation_maker", "request_presentation")
 request_deep_research = _lazy_action("actions.deep_research", "request_deep_research")
+word_typing = _lazy_action("actions.word_typing", "word_typing")
+word_intelligence = _lazy_action("actions.word_intelligence", "word_intelligence")
+file_intelligence = _lazy_action("actions.file_search", "file_intelligence")
+monitor_awareness = _lazy_action("actions.monitor_awareness", "monitor_awareness")
+study_tutor = _lazy_action("actions.study_tutor", "study_tutor")
+memory_control = _lazy_action("actions.memory_tool", "memory_control")
+provider_control = _lazy_action("core.provider_manager", "provider_control")
+background_control = _lazy_action("actions.background_runner", "background_control")
 
 
 def get_base_dir():
@@ -80,7 +88,7 @@ BASE_DIR        = get_base_dir()
 _load_dotenv()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL = "models/gemini-3.6-flash-native-audio-preview-12-2025"
+LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 SUPPORTED_VOICE_NAMES = {
@@ -367,6 +375,135 @@ def _clean_transcript(text: str) -> str:
     return text.strip()
 
 TOOL_DECLARATIONS = [
+    {
+        "name": "word_typing",
+        "description": (
+            "Types writing or text into Microsoft Word using authentic human-like keyboard automation "
+            "(never clipboard paste). Verifies Microsoft Word is open and focused before typing. "
+            "Supports configurable typing speeds ('human', 'normal', 'slow', 'fast', 'very_fast', 'instant') "
+            "and optional style/clarity refinement."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "text": {"type": "STRING", "description": "The writing, draft, or content to type into Microsoft Word"},
+                "document_name": {"type": "STRING", "description": "Optional title or filename of the target Word document"},
+                "document_path": {"type": "STRING", "description": "Optional path to .docx document to open if Word is not open"},
+                "speed": {"type": "STRING", "description": "Typing speed: 'human' | 'normal' | 'slow' | 'fast' | 'very_fast' | 'instant'. Default is 'human'."},
+                "mode": {"type": "STRING", "description": "Writing mode: 'verbatim' | 'polish' | 'formal' | 'clear' | 'summarize'. Default is 'verbatim'."},
+                "placement": {"type": "STRING", "description": "Cursor placement: 'cursor' | 'end' | 'beginning' | 'new_paragraph'. Default is 'cursor'."},
+                "instruction": {"type": "STRING", "description": "Optional instruction to polish or refine the text before typing"}
+            },
+            "required": ["text"]
+        }
+    },
+    {
+        "name": "word_intelligence",
+        "description": (
+            "Understands Microsoft Word document structure, locates headings or paragraphs, "
+            "and places or safely replaces content. Enforces safety confirmations for destructive changes."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'insert', 'outline', 'replace'"},
+                "heading": {"type": "STRING", "description": "Heading name to insert under or target"},
+                "paragraph": {"type": "INTEGER", "description": "Paragraph index to target"},
+                "text": {"type": "STRING", "description": "Text content to insert or write"},
+                "speed": {"type": "STRING", "description": "Typing speed: human, normal, slow, fast, very_fast, instant"},
+                "confirmed": {"type": "BOOLEAN", "description": "True if user confirmed replacement"}
+            }
+        }
+    },
+    {
+        "name": "file_intelligence",
+        "description": (
+            "Searches authorized folders deterministically and extracts document excerpts "
+            "(.docx, .pdf, .txt, .md, .py) without context bloat."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'search', 'read', 'authorize', 'list_folders'"},
+                "query": {"type": "STRING", "description": "Search query or file name"},
+                "path": {"type": "STRING", "description": "File or folder path"},
+                "file_ext": {"type": "STRING", "description": "Optional extension (e.g. docx, pdf)"}
+            }
+        }
+    },
+    {
+        "name": "monitor_awareness",
+        "description": (
+            "Detects multi-monitor setups and captures specific screens ('Monitor 1', 'Monitor 2', 'other monitor'). "
+            "Applies local deterministic OCR before Vision AI."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'capture', 'list', 'detect'"},
+                "monitor": {"type": "STRING", "description": "Monitor target: 'primary', 'other', '1', '2'"},
+                "question": {"type": "STRING", "description": "Optional question or visual analysis prompt"}
+            }
+        }
+    },
+    {
+        "name": "study_tutor",
+        "description": (
+            "Tutors the user step-by-step through academic questions, homework, and concepts "
+            "without giving away final answers immediately."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {"type": "STRING", "description": "Subject, problem, or question to study"},
+                "attempt": {"type": "STRING", "description": "User's attempt or thoughts"},
+                "mode": {"type": "STRING", "description": "Mode: 'guide', 'explain', 'quiz', 'check'"}
+            },
+            "required": ["topic"]
+        }
+    },
+    {
+        "name": "memory_control",
+        "description": (
+            "Searches, stores, and removes user memories. Never invents or hallucinates facts."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'search', 'store', 'forget', 'list'"},
+                "query": {"type": "STRING", "description": "Query to recall"},
+                "key": {"type": "STRING", "description": "Memory key"},
+                "value": {"type": "STRING", "description": "Memory value"},
+                "category": {"type": "STRING", "description": "Category (notes, preferences, projects, identity)"}
+            }
+        }
+    },
+    {
+        "name": "provider_control",
+        "description": (
+            "Inspects or manually switches active AI provider (Gemini, Claude, Copilot/OpenAI, Local Ollama). "
+            "Silent automatic fallback is disabled."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'status', 'select', 'list'"},
+                "provider": {"type": "STRING", "description": "Provider: gemini, ollama, claude, openai"}
+            }
+        }
+    },
+    {
+        "name": "background_control",
+        "description": (
+            "Controls running in the background, minimizing to system tray, and wake word listener."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "Action: 'minimize', 'restore', 'status'"}
+            }
+        }
+    },
     {
         "name": "open_app",
         "description": (
@@ -1528,7 +1665,39 @@ class JarvisLive:
         result = "Done."
 
         try:
-            if name == "open_app":
+            if name == "word_typing" or name == "type_into_word":
+                r = await asyncio.to_thread(lambda: word_typing(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Typed into Microsoft Word."
+
+            elif name == "word_intelligence" or name == "word_doc_intel":
+                r = await asyncio.to_thread(lambda: word_intelligence(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Word document action completed."
+
+            elif name == "file_intelligence" or name == "file_search":
+                r = await asyncio.to_thread(lambda: file_intelligence(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "File intelligence completed."
+
+            elif name == "monitor_awareness" or name == "screen_intel":
+                r = await asyncio.to_thread(lambda: monitor_awareness(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Screen analyzed."
+
+            elif name == "study_tutor" or name == "tutor_mode":
+                r = await asyncio.to_thread(lambda: study_tutor(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Tutoring response ready."
+
+            elif name == "memory_control" or name == "manage_memory":
+                r = await asyncio.to_thread(lambda: memory_control(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Memory updated."
+
+            elif name == "provider_control" or name == "manage_provider":
+                r = await asyncio.to_thread(lambda: provider_control(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Provider updated."
+
+            elif name == "background_control" or name == "background_runner":
+                r = await asyncio.to_thread(lambda: background_control(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Background state updated."
+
+            elif name == "open_app":
                 r = await asyncio.to_thread(lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 

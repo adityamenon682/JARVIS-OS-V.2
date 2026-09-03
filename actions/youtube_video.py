@@ -167,7 +167,7 @@ def _summarize_with_gemini(transcript: str, video_url: str) -> str:
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-3.6-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=(
             "You are JARVIS, an AI assistant. "
             "Summarize YouTube video transcripts clearly and concisely. "

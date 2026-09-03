@@ -82,7 +82,7 @@ def _get_api_key() -> str:
 def _get_os() -> str:
     return _load_config().get("os_system", "windows").lower()
 
-_LIVE_MODEL         = "models/gemini-3.6-flash-native-audio-preview-12-2025"
+_LIVE_MODEL         = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
@@ -228,7 +228,7 @@ def _direct_vision_answer(image_bytes: bytes, mime_type: str, user_text: str) ->
         f"User question: {user_text}"
     )
     response = client.models.generate_content(
-        model="gemini-3.6-flash",
+        model="gemini-2.5-flash",
         contents=[
             gtypes.Part.from_bytes(data=image_bytes, mime_type=mime_type),
             prompt,

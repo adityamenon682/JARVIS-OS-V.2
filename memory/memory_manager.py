@@ -228,3 +228,31 @@ def forget(key: str, category: str = "notes") -> str:
 
 
 forget_memory = forget
+
+
+def search_memory(query: str) -> list[dict]:
+    """Search long term memory for matching items without dumping all entries into prompts."""
+    if not query:
+        return []
+    memory = load_memory()
+    tokens = [t.lower() for t in query.split() if len(t) > 1]
+    matches = []
+
+    for cat, items in memory.items():
+        if not isinstance(items, dict):
+            continue
+        for key, entry in items.items():
+            val = entry.get("value") if isinstance(entry, dict) else str(entry)
+            text_to_search = f"{cat} {key} {val}".lower()
+            score = sum(1 for t in tokens if t in text_to_search)
+            if score > 0:
+                matches.append({
+                    "category": cat,
+                    "key": key,
+                    "value": val,
+                    "updated": entry.get("updated", "") if isinstance(entry, dict) else "",
+                    "score": score,
+                })
+
+    matches.sort(key=lambda x: x["score"], reverse=True)
+    return matches
