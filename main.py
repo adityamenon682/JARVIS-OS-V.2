@@ -10,38 +10,42 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
-
 import sounddevice as sd
 from google import genai
 from google.genai import types
 
-try:
-    from api import status as jarvis_status
-except Exception:
-    import importlib.util
-    _spec = importlib.util.spec_from_file_location("jarvis_status", ROOT_DIR / "api" / "status.py")
-    if _spec and _spec.loader:
-        jarvis_status = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(jarvis_status)
+STATUS_PATH = ROOT_DIR / "tmp" / "jarvis_status.json"
 
-except (ImportError, ModuleNotFoundError):
-    try:
-        import importlib.util
-        _spec = importlib.util.spec_from_file_location("jarvis_status", ROOT_DIR / "api" / "status.py")
-        if _spec and _spec.loader:
-            jarvis_status = importlib.util.module_from_spec(_spec)
-            _spec.loader.exec_module(jarvis_status)
-        else:
-            raise ImportError("Could not load api.status directly")
-    except Exception:
-        class _FallbackStatus:
-            @staticmethod
-            def write_status(data: dict) -> None: pass
-            @staticmethod
-            def read_status() -> dict: return {}
-            @staticmethod
-            def clear_status() -> None: pass
-        jarvis_status = _FallbackStatus()
+class _JarvisStatusManager:
+    @staticmethod
+    def write_status(data: dict) -> None:
+        try:
+            from datetime import datetime
+            STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            payload = {**data}
+            payload.setdefault("timestamp", datetime.utcnow().isoformat() + "Z")
+            STATUS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    @staticmethod
+    def read_status() -> dict:
+        try:
+            if STATUS_PATH.exists():
+                return json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return {}
+
+    @staticmethod
+    def clear_status() -> None:
+        try:
+            if STATUS_PATH.exists():
+                STATUS_PATH.unlink()
+        except Exception:
+            pass
+
+jarvis_status = _JarvisStatusManager()
 
 from core.jarvis_client import JarvisClient
 from memory.memory_manager import (
