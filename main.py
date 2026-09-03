@@ -2251,7 +2251,62 @@ def main():
 
         return self_test_main([argument for argument in sys.argv[1:] if argument != "--self-test"])
 
-    from ui import JarvisUI
+    try:
+        from ui import JarvisUI
+    except Exception as _ui_err:
+        class _ConsoleRoot:
+            def __init__(self):
+                self._running = True
+
+            def mainloop(self):
+                print("\n[JARVIS] 🎙️ Running in Console/Voice mode (Press Ctrl+C to stop)...")
+                try:
+                    while self._running:
+                        time.sleep(0.5)
+                except (KeyboardInterrupt, SystemExit):
+                    print("\n[JARVIS] Shutting down...")
+
+            def quit(self):
+                self._running = False
+
+        class _ConsoleUI:
+            def __init__(self, face_path: str = "face.png", size=None):
+                self.muted = False
+                self.current_file = None
+                self.on_text_command = None
+                self.on_quit_requested = None
+                self.on_voice_change = None
+                self.on_tts_provider_change = None
+                self.root = _ConsoleRoot()
+
+            def wait_for_api_key(self):
+                pass
+
+            def set_state(self, state: str):
+                print(f"[JARVIS Status] ➔ {state}")
+
+            def write_log(self, msg: str):
+                print(f"[JARVIS Log] {msg}")
+
+            def clear_subtitle(self):
+                pass
+
+            def show_subtitle(self, txt: str):
+                print(f"[JARVIS] {txt}")
+
+            def sync_voice_display(self, name: str):
+                pass
+
+            def set_graphics_quality(self, quality: str):
+                pass
+
+            def set_theme(self, theme: str):
+                pass
+
+            def handle_ui_command(self, action: str):
+                print(f"[JARVIS Action] {action}")
+
+        JarvisUI = _ConsoleUI
 
     running_as_app = getattr(sys, "frozen", False)
 
