@@ -1,0 +1,4 @@
+# Windows packaging dependencies.
+# Not part of requirements.txt because end users running "jarvis" from
+# source never need PyInstaller — only scripts/build_windows.py does.
+pyinstaller>=6.10,<7; platform_system=="Windows"
