@@ -7,10 +7,35 @@ import sys
 import traceback
 from pathlib import Path
 
+ROOT_DIR = Path(__file__).resolve().parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from api import status as jarvis_status
+
+try:
+    from api import status as jarvis_status
+except (ImportError, ModuleNotFoundError):
+    try:
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location("jarvis_status", ROOT_DIR / "api" / "status.py")
+        if _spec and _spec.loader:
+            jarvis_status = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(jarvis_status)
+        else:
+            raise ImportError("Could not load api.status directly")
+    except Exception:
+        class _FallbackStatus:
+            @staticmethod
+            def write_status(data: dict) -> None: pass
+            @staticmethod
+            def read_status() -> dict: return {}
+            @staticmethod
+            def clear_status() -> None: pass
+        jarvis_status = _FallbackStatus()
+
 from core.jarvis_client import JarvisClient
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
